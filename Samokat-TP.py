@@ -350,19 +350,23 @@ async def human_type_city_autocomplete(page, selector, text, min_delay=0.11, max
         await asyncio.sleep(random.uniform(min_delay, max_delay))
 
 
-async def human_scroll(page, distance, steps=5):
+async def human_scroll(page, distance):
+    """Scroll the page smoothly in small wheel-like increments."""
     direction = 1 if distance > 0 else -1
     remaining = abs(distance)
-    for _ in range(max(1, steps)):
-        if remaining <= 0:
-            break
-        step = min(random.randint(50, 300), remaining)
+    x = random.randint(300, 1000)
+    y = random.randint(200, 600)
+    await page.mouse.move(x, y, steps=random.randint(2, 5))
+    while remaining > 0:
+        step = min(random.randint(20, 40), remaining)
         await page.mouse.wheel(0, direction * step)
         remaining -= step
-        move_x = random.randint(50, 1300)
-        move_y = random.randint(50, 700)
-        await page.mouse.move(move_x, move_y, steps=random.randint(3, 8))
-        await asyncio.sleep(random.uniform(0.5, 1.5))
+        x += random.randint(-5, 5)
+        y += random.randint(-5, 5)
+        x = max(0, min(1366, x))
+        y = max(0, min(768, y))
+        await page.mouse.move(x, y, steps=1)
+        await asyncio.sleep(random.uniform(0.01, 0.05))
 
 
 async def emulate_user_reading(page, duration):
@@ -376,12 +380,10 @@ async def emulate_user_reading(page, duration):
 
         if action == "scroll_down":
             distance = random.randint(200, 600)
-            steps = random.randint(2, 5)
-            await human_scroll(page, distance, steps)
+            await human_scroll(page, distance)
         elif action == "scroll_up":
             distance = -random.randint(150, 400)
-            steps = random.randint(2, 4)
-            await human_scroll(page, distance, steps)
+            await human_scroll(page, distance)
         elif action == "pause":
             await asyncio.sleep(random.uniform(1.0, 3.5))
         elif action == "mouse_wiggle":
@@ -432,10 +434,7 @@ async def smooth_scroll_to_form(page):
             step = 100
         else:
             step = 40
-        await page.mouse.wheel(0, step if diff > 0 else -step)
-        rand_x = random.randint(100, 1200)
-        rand_y = random.randint(100, 700)
-        await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
+        await human_scroll(page, step if diff > 0 else -step)
         await asyncio.sleep(random.uniform(0.04, 0.1))
 
 async def run_browser():
@@ -659,7 +658,7 @@ async def run_browser():
                 # Этап 6. Ghost-cursor доводит курсор до кнопки + нативный клик + извлечение utm_term
                 # ====================================================================================
                 scroll_step = random.randint(0, 190)
-                await page.mouse.wheel(0, scroll_step)
+                await human_scroll(page, scroll_step)
                 await asyncio.sleep(random.uniform(0.2, 0.45))
                 try:
                     button_selector = 'button.btn_submit'

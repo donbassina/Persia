@@ -49,11 +49,16 @@ except Exception as e:
 import requests
 import time
 
+# Дополнительные параметры из полученного JSON
+phone_from_Avito = params.get("phone_from_Avito", "")
+phone_for_form = phone_from_Avito if phone_from_Avito else user_phone
 
-
-
-
-
+user_age = params.get("user_age", "")
+user_city = params.get("user_city", "")
+user_name = params.get("user_name", "")
+birth_date = params.get("birth_date", "")
+user_gender = params.get("user_gender", "")
+user_courier_type = params.get("user_courier_type", "")
 
 if sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding='utf-8')
@@ -119,42 +124,6 @@ def send_webhook(result, webhook_url):
                 log(f"[WARN] webhook fail, retry {attempt + 1} in 60s: {e}", LOG_FILE)
                 time.sleep(60)
         log(f"[FATAL] webhook 3rd fail: {e}", LOG_FILE)
-
-
-
-
-
-
-
-
-# ====================================================================================
-# Этап 1. Чтение параметров из stdin (JSON)
-# ====================================================================================
-
-try:
-    params = json.load(sys.stdin)
-    log(f"[INFO] Получены параметры: {params}", LOG_FILE)
-
-    EXTRA_UA     = params.get("ua", "Mozilla/5.0")
-    headless_flag = params.get("headless", False)
-    webhook_url = params.get("Webhook", "")
-
-except Exception as e:
-    log(f"[ERROR] Не удалось получить JSON из stdin: {e}", LOG_FILE)
-    sys.exit(1)
-
-user_phone       = params.get("user_phone", "")
-phone_from_Avito = params.get("phone_from_Avito", "")
-phone_for_form   = phone_from_Avito if phone_from_Avito else user_phone
-
-user_age         = params.get("user_age", "")
-user_city        = params.get("user_city", "")
-user_name        = params.get("user_name", "")
-birth_date       = params.get("birth_date", "")
-user_gender      = params.get("user_gender", "")
-user_courier_type = params.get("user_courier_type", "")
-
-
 
 
 

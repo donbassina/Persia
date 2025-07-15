@@ -350,6 +350,21 @@ async def human_type_city_autocomplete(page, selector, text, min_delay=0.11, max
         await asyncio.sleep(random.uniform(min_delay, max_delay))
 
 
+async def human_scroll(page, distance, steps=5):
+    direction = 1 if distance > 0 else -1
+    remaining = abs(distance)
+    for _ in range(max(1, steps)):
+        if remaining <= 0:
+            break
+        step = min(random.randint(50, 300), remaining)
+        await page.mouse.wheel(0, direction * step)
+        remaining -= step
+        move_x = random.randint(50, 1300)
+        move_y = random.randint(50, 700)
+        await page.mouse.move(move_x, move_y, steps=random.randint(3, 8))
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+
+
 async def emulate_user_reading(page, duration):
     blocks = ['header', '.hero', '.about', '.benefits', '.form-wrapper', 'footer']
     start = asyncio.get_event_loop().time()
@@ -360,13 +375,13 @@ async def emulate_user_reading(page, duration):
         )[0]
 
         if action == "scroll_down":
-            step = random.randint(120, 800)
-            await page.mouse.wheel(0, step)
-            await asyncio.sleep(random.uniform(0.6, 1.8))
+            distance = random.randint(200, 600)
+            steps = random.randint(2, 5)
+            await human_scroll(page, distance, steps)
         elif action == "scroll_up":
-            step = random.randint(100, 400)
-            await page.mouse.wheel(0, -step)
-            await asyncio.sleep(random.uniform(0.6, 1.2))
+            distance = -random.randint(150, 400)
+            steps = random.randint(2, 4)
+            await human_scroll(page, distance, steps)
         elif action == "pause":
             await asyncio.sleep(random.uniform(1.0, 3.5))
         elif action == "mouse_wiggle":

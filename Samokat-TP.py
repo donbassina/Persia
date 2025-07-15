@@ -369,46 +369,55 @@ async def human_scroll(page, distance):
         await asyncio.sleep(random.uniform(0.01, 0.05))
 
 
-async def emulate_user_reading(page, duration):
-    blocks = ['header', '.hero', '.about', '.benefits', '.form-wrapper', 'footer']
-    start = asyncio.get_event_loop().time()
-    while asyncio.get_event_loop().time() - start < duration:
+async def emulate_user_reading(page, total_time):
+    start_time = asyncio.get_event_loop().time()
+    blocks = ['.hero', '.about', '.benefits', '.form-wrapper']
+    height = await page.evaluate("document.body.scrollHeight")
+    current_y = 0
+
+    while asyncio.get_event_loop().time() - start_time < total_time:
         action = random.choices(
-            ["scroll_down", "scroll_up", "pause", "hover_block", "mouse_wiggle"],
-            weights=[0.45, 0.2, 0.15, 0.12, 0.08]
+            ["scroll_down", "scroll_up", "pause", "to_block", "mouse_wiggle"],
+            weights=[0.48, 0.14, 0.20, 0.12, 0.06]
         )[0]
 
         if action == "scroll_down":
-            distance = random.randint(200, 600)
-            await human_scroll(page, distance)
+            step = random.choice([random.randint(120, 350), random.randint(400, 800)])
+            current_y = min(current_y + step, height-1)
+            await page.evaluate(f"window.scrollTo(0, {current_y})")
+            log(f"[INFO] Скроллим вниз на {step}")
+            await asyncio.sleep(random.uniform(0.7, 1.7))
         elif action == "scroll_up":
-            distance = -random.randint(150, 400)
-            await human_scroll(page, distance)
+            step = random.randint(80, 290)
+            current_y = max(current_y - step, 0)
+            await page.evaluate(f"window.scrollTo(0, {current_y})")
+            log(f"[INFO] Скроллим вверх на {step}")
+            await asyncio.sleep(random.uniform(0.5, 1.1))
         elif action == "pause":
-            await asyncio.sleep(random.uniform(1.0, 3.5))
+            t = random.uniform(1.2, 3.8)
+            log(f"[INFO] Пауза {t:.1f}")
+            await asyncio.sleep(t)
         elif action == "mouse_wiggle":
             x = random.randint(100, 1200)
             y = random.randint(100, 680)
-            dx = random.randint(-15, 15)
-            dy = random.randint(-12, 12)
-            await page.mouse.move(x, y, steps=random.randint(5, 12))
-            await asyncio.sleep(random.uniform(0.05, 0.15))
-            await page.mouse.move(x + dx, y + dy, steps=2)
-            await asyncio.sleep(random.uniform(0.1, 0.25))
-        else:  # hover_block
+            dx = random.randint(-10, 10)
+            dy = random.randint(-8, 8)
+            await page.mouse.move(x, y, steps=random.randint(4, 10))
+            await asyncio.sleep(random.uniform(0.08, 0.18))
+            await page.mouse.move(x+dx, y+dy, steps=2)
+            log(f"[INFO] Мышь дрожит ({x},{y})")
+            await asyncio.sleep(random.uniform(0.10, 0.22))
+        else:
             sel = random.choice(blocks)
             el = await page.query_selector(sel)
             if el:
                 box = await el.bounding_box()
                 if box:
-                    x = box["x"] + random.uniform(10, box["width"] - 10)
-                    y = box["y"] + random.uniform(10, box["height"] - 10)
-                    await page.mouse.move(x, y, steps=random.randint(12, 25))
-                    try:
-                        await page.hover(sel)
-                    except Exception:
-                        pass
-                    await asyncio.sleep(random.uniform(0.5, 1.5))
+                    x = box["x"] + random.uniform(12, box["width"]-12)
+                    y = box["y"] + random.uniform(12, box["height"]-12)
+                    await page.mouse.move(x, y, steps=random.randint(10, 22))
+                    log(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})")
+                    await asyncio.sleep(random.uniform(0.4, 1.3))
 
 
 async def smooth_scroll_to_form(page):

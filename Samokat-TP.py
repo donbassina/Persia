@@ -369,7 +369,7 @@ async def human_scroll(page, distance):
         await asyncio.sleep(random.uniform(0.01, 0.05))
 
 
-async def emulate_user_reading(page, total_time):
+async def emulate_user_reading(page, total_time, LOG_FILE):
     start_time = asyncio.get_event_loop().time()
     blocks = ['.hero', '.about', '.benefits', '.form-wrapper']
     height = await page.evaluate("document.body.scrollHeight")
@@ -385,17 +385,17 @@ async def emulate_user_reading(page, total_time):
             step = random.choice([random.randint(120, 350), random.randint(400, 800)])
             current_y = min(current_y + step, height-1)
             await page.evaluate(f"window.scrollTo(0, {current_y})")
-            log(f"[INFO] Скроллим вниз на {step}")
+            log(f"[INFO] Скроллим вниз на {step}", LOG_FILE)
             await asyncio.sleep(random.uniform(0.7, 1.7))
         elif action == "scroll_up":
             step = random.randint(80, 290)
             current_y = max(current_y - step, 0)
             await page.evaluate(f"window.scrollTo(0, {current_y})")
-            log(f"[INFO] Скроллим вверх на {step}")
+            log(f"[INFO] Скроллим вверх на {step}", LOG_FILE)
             await asyncio.sleep(random.uniform(0.5, 1.1))
         elif action == "pause":
             t = random.uniform(1.2, 3.8)
-            log(f"[INFO] Пауза {t:.1f}")
+            log(f"[INFO] Пауза {t:.1f}", LOG_FILE)
             await asyncio.sleep(t)
         elif action == "mouse_wiggle":
             x = random.randint(100, 1200)
@@ -405,7 +405,7 @@ async def emulate_user_reading(page, total_time):
             await page.mouse.move(x, y, steps=random.randint(4, 10))
             await asyncio.sleep(random.uniform(0.08, 0.18))
             await page.mouse.move(x+dx, y+dy, steps=2)
-            log(f"[INFO] Мышь дрожит ({x},{y})")
+            log(f"[INFO] Мышь дрожит ({x},{y})", LOG_FILE)
             await asyncio.sleep(random.uniform(0.10, 0.22))
         else:
             sel = random.choice(blocks)
@@ -416,7 +416,7 @@ async def emulate_user_reading(page, total_time):
                     x = box["x"] + random.uniform(12, box["width"]-12)
                     y = box["y"] + random.uniform(12, box["height"]-12)
                     await page.mouse.move(x, y, steps=random.randint(10, 22))
-                    log(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})")
+                    log(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})", LOG_FILE)
                     await asyncio.sleep(random.uniform(0.4, 1.3))
 
 
@@ -555,7 +555,7 @@ async def run_browser():
             start_time = asyncio.get_event_loop().time()
             log(f"[INFO] Имитация “чтения” лендинга: {total_time:.1f} сек", LOG_FILE)
 
-            await emulate_user_reading(page, total_time)
+            await emulate_user_reading(page, total_time, LOG_FILE)
 
 
 

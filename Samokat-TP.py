@@ -410,26 +410,13 @@ async def smooth_scroll_to_form(page):
     b = await form.bounding_box()
     if not b:
         return
-    viewport_height = 768
-    center_screen = viewport_height / 2
-    while True:
-        current_y = await page.evaluate("window.scrollY")
-        b = await form.bounding_box()
-        center_form = b["y"] + b["height"] / 2
-        diff = center_form - center_screen
-        abs_diff = abs(diff)
-        if abs_diff <= 40:
-            break
-        if abs_diff > 400:
-            step = 300
-        elif abs_diff > 120:
-            step = 100
-        else:
-            step = 40
-        new_y = current_y + step if diff > 0 else current_y - step
-        await page.evaluate(f"window.scrollTo(0, {new_y})")
-        current_y = new_y
-        await asyncio.sleep(random.uniform(0.04, 0.1))
+    target_y = b["y"]
+    current_y = await page.evaluate("window.scrollY")
+    while abs(target_y - current_y) > 40:
+        step = random.choice([random.randint(120, 350), random.randint(400, 800)])
+        current_y = current_y + step if target_y > current_y else current_y - step
+        await page.evaluate(f"window.scrollTo(0, {current_y})")
+        await asyncio.sleep(random.uniform(0.7, 1.7))
 
 async def run_browser():
     global screenshot_path
@@ -545,7 +532,7 @@ async def run_browser():
 
 
             # ====================================================================================
-            # Плавный, крупный и потом мелкий скролл к форме, без телепортов
+            # Быстрые крупные скроллы к форме, без телепортов
             # ====================================================================================
             await smooth_scroll_to_form(page)
 
@@ -651,11 +638,11 @@ async def run_browser():
                 # ====================================================================================
                 # Этап 6. Ghost-cursor доводит курсор до кнопки + нативный клик + извлечение utm_term
                 # ====================================================================================
-                scroll_step = random.randint(0, 190)
+                scroll_step = random.choice([random.randint(120, 350), random.randint(400, 800)])
                 current_y = await page.evaluate("window.scrollY")
                 new_y = current_y + scroll_step
                 await page.evaluate(f"window.scrollTo(0, {new_y})")
-                await asyncio.sleep(random.uniform(0.2, 0.45))
+                await asyncio.sleep(random.uniform(0.7, 1.7))
                 try:
                     button_selector = 'button.btn_submit'
                     old_url = page.url

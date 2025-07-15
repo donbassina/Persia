@@ -1,0 +1,1 @@
+# Самокат Playwright script placeholder

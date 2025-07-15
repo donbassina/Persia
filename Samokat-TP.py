@@ -2,6 +2,7 @@
 import random
 import asyncio
 from playwright.async_api import async_playwright
+from playwright_stealth import stealth
 
 # --- универсальный импорт исключений Playwright (+ таймаут) ------------------
 try:                                    # Playwright ≥ 1.43.0
@@ -348,6 +349,80 @@ async def human_type_city_autocomplete(page, selector, text, min_delay=0.11, max
         """, {"selector": selector, "char": char})
         await asyncio.sleep(random.uniform(min_delay, max_delay))
 
+
+async def emulate_user_reading(page, duration):
+    blocks = ['header', '.hero', '.about', '.benefits', '.form-wrapper', 'footer']
+    start = asyncio.get_event_loop().time()
+    while asyncio.get_event_loop().time() - start < duration:
+        action = random.choices(
+            ["scroll_down", "scroll_up", "pause", "hover_block", "mouse_wiggle"],
+            weights=[0.45, 0.2, 0.15, 0.12, 0.08]
+        )[0]
+
+        if action == "scroll_down":
+            step = random.randint(120, 800)
+            await page.mouse.wheel(0, step)
+            await asyncio.sleep(random.uniform(0.6, 1.8))
+        elif action == "scroll_up":
+            step = random.randint(100, 400)
+            await page.mouse.wheel(0, -step)
+            await asyncio.sleep(random.uniform(0.6, 1.2))
+        elif action == "pause":
+            await asyncio.sleep(random.uniform(1.0, 3.5))
+        elif action == "mouse_wiggle":
+            x = random.randint(100, 1200)
+            y = random.randint(100, 680)
+            dx = random.randint(-15, 15)
+            dy = random.randint(-12, 12)
+            await page.mouse.move(x, y, steps=random.randint(5, 12))
+            await asyncio.sleep(random.uniform(0.05, 0.15))
+            await page.mouse.move(x + dx, y + dy, steps=2)
+            await asyncio.sleep(random.uniform(0.1, 0.25))
+        else:  # hover_block
+            sel = random.choice(blocks)
+            el = await page.query_selector(sel)
+            if el:
+                box = await el.bounding_box()
+                if box:
+                    x = box["x"] + random.uniform(10, box["width"] - 10)
+                    y = box["y"] + random.uniform(10, box["height"] - 10)
+                    await page.mouse.move(x, y, steps=random.randint(12, 25))
+                    try:
+                        await page.hover(sel)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+
+
+async def smooth_scroll_to_form(page):
+    form = await page.query_selector("div.form-wrapper")
+    if not form:
+        return
+    b = await form.bounding_box()
+    if not b:
+        return
+    viewport_height = 768
+    center_screen = viewport_height / 2
+    while True:
+        current_y = await page.evaluate("window.scrollY")
+        b = await form.bounding_box()
+        center_form = b["y"] + b["height"] / 2
+        diff = center_form - center_screen
+        abs_diff = abs(diff)
+        if abs_diff <= 40:
+            break
+        if abs_diff > 400:
+            step = 300
+        elif abs_diff > 120:
+            step = 100
+        else:
+            step = 40
+        await page.mouse.wheel(0, step if diff > 0 else -step)
+        rand_x = random.randint(100, 1200)
+        rand_y = random.randint(100, 700)
+        await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
+        await asyncio.sleep(random.uniform(0.04, 0.1))
+
 async def run_browser():
     global screenshot_path
     async with async_playwright() as p:
@@ -370,6 +445,10 @@ async def run_browser():
             timezone_id=tz,
             viewport={"width": 1366, "height": 768}
         )
+
+        # apply playwright-stealth anti-bot measures
+        await stealth.Stealth().apply_stealth_async(context)
+
         page = await context.new_page()
 
 
@@ -453,88 +532,14 @@ async def run_browser():
             start_time = asyncio.get_event_loop().time()
             log(f"[INFO] Имитация “чтения” лендинга: {total_time:.1f} сек", LOG_FILE)
 
-            blocks = ['.hero', '.about', '.benefits', '.form-wrapper']
-            height = await page.evaluate("document.body.scrollHeight")
-            current_y = 0
-
-            while asyncio.get_event_loop().time() - start_time < total_time:
-                action = random.choices(
-                    ["scroll_down", "scroll_up", "pause", "to_block", "mouse_wiggle"],
-                    weights=[0.48, 0.14, 0.20, 0.12, 0.06]
-                )[0]
-
-                if action == "scroll_down":
-                    step = random.choice([random.randint(120, 350), random.randint(400, 800)])
-                    await page.mouse.wheel(0, step)
-                    log(f"[INFO] Скроллим вниз на {step}", LOG_FILE)
-                    await asyncio.sleep(random.uniform(0.7, 1.7))
-                elif action == "scroll_up":
-                    step = random.randint(80, 290)
-                    await page.mouse.wheel(0, -step)
-                    log(f"[INFO] Скроллим вверх на {step}", LOG_FILE)
-                    await asyncio.sleep(random.uniform(0.5, 1.1))
-
-                elif action == "pause":
-                    t = random.uniform(1.2, 3.8)
-                    log(f"[INFO] Пауза {t:.1f}", LOG_FILE)
-                    await asyncio.sleep(t)
-                elif action == "mouse_wiggle":
-                    x = random.randint(100, 1200)
-                    y = random.randint(100, 680)
-                    dx = random.randint(-10, 10)
-                    dy = random.randint(-8, 8)
-                    await page.mouse.move(x, y, steps=random.randint(4, 10))
-                    await asyncio.sleep(random.uniform(0.08, 0.18))
-                    await page.mouse.move(x+dx, y+dy, steps=2)
-                    log(f"[INFO] Мышь дрожит ({x},{y})", LOG_FILE)
-                    await asyncio.sleep(random.uniform(0.10, 0.22))
-                else:
-                    sel = random.choice(blocks)
-                    el = await page.query_selector(sel)
-                    if el:
-                        box = await el.bounding_box()
-                        if box:
-                            x = box["x"] + random.uniform(12, box["width"]-12)
-                            y = box["y"] + random.uniform(12, box["height"]-12)
-                            await page.mouse.move(x, y, steps=random.randint(10, 22))
-                            log(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})", LOG_FILE)
-                            await asyncio.sleep(random.uniform(0.4, 1.3))
+            await emulate_user_reading(page, total_time)
 
 
 
             # ====================================================================================
             # Плавный, крупный и потом мелкий скролл к форме, без телепортов
             # ====================================================================================
-            form = await page.query_selector("div.form-wrapper")
-            if form:
-                b = await form.bounding_box()
-                if b:
-                    viewport_height = 768
-                    center_screen = viewport_height / 2
-                    while True:
-                        current_y = await page.evaluate("window.scrollY")
-                        b = await form.bounding_box()
-                        center_form = b["y"] + b["height"] / 2
-                        diff = (center_form - center_screen)
-                        abs_diff = abs(diff)
-                        if abs_diff > 400:
-                            step = 300
-                        elif abs_diff > 120:
-                            step = 100
-                        elif abs_diff > 40:
-                            step = 40
-                        else:
-                            break
-                        if diff > 0:
-                            new_y = current_y + step
-                        else:
-                            new_y = current_y - step
-                        await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
-                        rand_x = random.randint(100, 1200)
-                        rand_y = random.randint(100, 700)
-                        await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
-                        await asyncio.sleep(random.uniform(0.04, 0.09))
-                    log("[INFO] Скролл завершён, форма в центре экрана", LOG_FILE)
+            await smooth_scroll_to_form(page)
 
             # ====================================================================================
             # Этап 4. Клик мышью по каждому полю, заполнение всех полей, установка галочки
@@ -639,8 +644,7 @@ async def run_browser():
                 # Этап 6. Ghost-cursor доводит курсор до кнопки + нативный клик + извлечение utm_term
                 # ====================================================================================
                 scroll_step = random.randint(0, 190)
-                current_y = await page.evaluate("window.scrollY")
-                await page.evaluate(f"window.scrollTo(0, {current_y + scroll_step})")
+                await page.mouse.wheel(0, scroll_step)
                 await asyncio.sleep(random.uniform(0.2, 0.45))
                 try:
                     button_selector = 'button.btn_submit'

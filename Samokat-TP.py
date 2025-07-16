@@ -105,6 +105,23 @@ WORK_DIR = os.path.dirname(__file__)
 
 
 
+async def is_form_visible(page):
+    return await page.evaluate("""
+        () => {
+            const el = document.querySelector('div.form-wrapper');
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+            const rect = el.getBoundingClientRect();
+            return rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
+        }
+    """)
+
+
+
+
+
+
 
 
 
@@ -409,40 +426,61 @@ async def emulate_user_reading(page, total_time, LOG_FILE):
                     await asyncio.sleep(random.uniform(0.4, 1.3))
 
 
-async def smooth_scroll_to_form(page):
-    # ====================================================================================
-    # Плавный, крупный и потом мелкий скролл к форме, без телепортов
-    # ====================================================================================
-    form = await page.query_selector("div.form-wrapper")
-    if form:
-        b = await form.bounding_box()
-        if b:
-            viewport_height = 768
-            center_screen = viewport_height / 2
-            while True:
-                current_y = await page.evaluate("window.scrollY")
-                b = await form.bounding_box()
-                center_form = b["y"] + b["height"] / 2
-                diff = (center_form - center_screen)
-                abs_diff = abs(diff)
-                if abs_diff > 400:
-                    step = 300
-                elif abs_diff > 120:
-                    step = 100
-                elif abs_diff > 40:
-                    step = 40
-                else:
-                    break
-                if diff > 0:
-                    new_y = current_y + step
-                else:
-                    new_y = current_y - step
-                await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
-                rand_x = random.randint(100, 1200)
-                rand_y = random.randint(100, 700)
-                await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
-                await asyncio.sleep(random.uniform(0.04, 0.09))
-            log("[INFO] Скролл завершён, форма в центре экрана", LOG_FILE)
+
+
+# --- 0000000000000000000000000000000000 ---
+# --- 0000000000000000000000000000000000 ---
+# --- 0000000000000000000000000000000000 ---
+
+
+
+# ====================================================================================
+# Плавный, крупный и потом мелкий скролл к форме, без телепортов
+# ====================================================================================
+form = await page.query_selector("div.form-wrapper")
+if form:
+    b = await form.bounding_box()
+    if b:
+        viewport_height = 768
+        center_screen = viewport_height / 2
+        while True:
+            current_y = await page.evaluate("window.scrollY")
+            b = await form.bounding_box()
+            center_form = b["y"] + b["height"] / 2
+            diff = (center_form - center_screen)
+            abs_diff = abs(diff)
+            if abs_diff > 400:
+                step = 300
+            elif abs_diff > 120:
+                step = 100
+            elif abs_diff > 40:
+                step = 40
+            else:
+                break
+            if diff > 0:
+                new_y = current_y + step
+            else:
+                new_y = current_y - step
+            await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
+            rand_x = random.randint(100, 1200)
+            rand_y = random.randint(100, 700)
+            await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
+            await asyncio.sleep(random.uniform(0.04, 0.09))
+        log("[INFO] Скролл завершён, форма в центре экрана")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 async def run_browser():
     global screenshot_path
@@ -789,4 +827,3 @@ else:
 if not BROWSER_CLOSED_MANUALLY:
     send_webhook(result, webhook_url)
 print(json.dumps(result, ensure_ascii=False))
-

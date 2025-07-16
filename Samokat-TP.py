@@ -437,37 +437,45 @@ async def emulate_user_reading(page, total_time, LOG_FILE):
 # ====================================================================================
 # Плавный, крупный и потом мелкий скролл к форме, без телепортов
 # ====================================================================================
-form = await page.query_selector("div.form-wrapper")
-if form:
-    b = await form.bounding_box()
-    if b:
-        viewport_height = 768
-        center_screen = viewport_height / 2
-        while True:
-            current_y = await page.evaluate("window.scrollY")
-            b = await form.bounding_box()
-            center_form = b["y"] + b["height"] / 2
-            diff = (center_form - center_screen)
-            abs_diff = abs(diff)
-            if abs_diff > 400:
-                step = 300
-            elif abs_diff > 120:
-                step = 100
-            elif abs_diff > 40:
-                step = 40
-            else:
-                break
-            if diff > 0:
-                new_y = current_y + step
-            else:
-                new_y = current_y - step
-            await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
-            rand_x = random.randint(100, 1200)
-            rand_y = random.randint(100, 700)
-            await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
-            await asyncio.sleep(random.uniform(0.04, 0.09))
-        log("[INFO] Скролл завершён, форма в центре экрана")
 
+async def smooth_scroll_to_form(page):
+    form = await page.query_selector("div.form-wrapper")
+    if not form:
+        log("[WARN] div.form-wrapper не найден", LOG_FILE)
+        return
+
+    b = await form.bounding_box()
+    if not b:
+        log("[WARN] Не удалось получить bounding_box формы", LOG_FILE)
+        return
+
+    viewport_height = 768
+    center_screen = viewport_height / 2
+    while True:
+        current_y = await page.evaluate("window.scrollY")
+        b = await form.bounding_box()
+        center_form = b["y"] + b["height"] / 2
+        diff = (center_form - center_screen)
+        abs_diff = abs(diff)
+        if abs_diff > 400:
+            step = 300
+        elif abs_diff > 120:
+            step = 100
+        elif abs_diff > 40:
+            step = 40
+        else:
+            break
+        if diff > 0:
+            new_y = current_y + step
+        else:
+            new_y = current_y - step
+        await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
+        rand_x = random.randint(100, 1200)
+        rand_y = random.randint(100, 700)
+        await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
+        await asyncio.sleep(random.uniform(0.04, 0.09))
+
+    log("[INFO] Скролл завершён, форма в центре экрана")
 
 
 

@@ -407,16 +407,26 @@ async def smooth_scroll_to_form(page):
     form = await page.query_selector("div.form-wrapper")
     if not form:
         return
-    b = await form.bounding_box()
-    if not b:
+    box = await form.bounding_box()
+    if not box:
         return
-    target_y = b["y"]
+    viewport_h = await page.evaluate("window.innerHeight")
+    page_h = await page.evaluate("document.body.scrollHeight")
+    target = box["y"] + box["height"] / 2 - viewport_h / 2
+    target = max(0, min(target, page_h - viewport_h))
     current_y = await page.evaluate("window.scrollY")
-    while abs(target_y - current_y) > 40:
-        step = random.choice([random.randint(120, 350), random.randint(400, 800)])
-        current_y = current_y + step if target_y > current_y else current_y - step
+
+    if target <= current_y:
+        await page.evaluate(f"window.scrollTo(0, {target})")
+        return
+
+    while current_y < target:
+        step = random.randint(120, 500)
+        current_y = min(current_y + step, target)
         await page.evaluate(f"window.scrollTo(0, {current_y})")
-        await asyncio.sleep(random.uniform(0.7, 1.7))
+        await asyncio.sleep(random.uniform(0.1, 0.3))
+
+    await page.evaluate(f"window.scrollTo(0, {target})")
 
 async def run_browser():
     global screenshot_path

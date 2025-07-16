@@ -187,6 +187,7 @@ async def fill_full_name(page, name, retries=3):
 
 
 async def fill_city(page, city, retries=3):
+    city_lower = city.strip().lower()
     for attempt in range(retries):
         try:
             input_box = page.get_by_placeholder("Выберите город").nth(0)
@@ -195,19 +196,24 @@ async def fill_city(page, city, retries=3):
             await input_box.fill("")
             part_city = get_partial_city(city)
             await human_type_city_autocomplete(page, 'input[name="user_city"]', part_city)
+
             try:
                 await page.wait_for_selector('.form-list-item', timeout=1500)
             except PWTimeoutError:
                 pass
+
             try:
-                await page.get_by_text(city, exact=True).click(timeout=1500)
+                items = await page.query_selector_all('.form-list-item')
+                for it in items:
+                    txt = (await it.inner_text()).strip().lower()
+                    if txt == city_lower:
+                        await it.click()
+                        break
             except Exception:
-                value = await input_box.input_value()
-                if value.strip().lower() == city.strip().lower():
-                    return True
-                continue
+                pass
+
             value = await input_box.input_value()
-            if value.strip().lower() == city.strip().lower():
+            if value.strip().lower() == city_lower:
                 return True
             await page.wait_for_timeout(200)
         except Exception as e:

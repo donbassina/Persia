@@ -601,19 +601,11 @@ async def run_browser():
 
             await emulate_user_reading(page, total_time, LOG_FILE)
 
-            wait_start = asyncio.get_event_loop().time()
-            while True:
-                if await is_form_visible(page):
-                    break
-                if asyncio.get_event_loop().time() - wait_start > 9:
-                    error_msg = "Форма не появилась на экране"
-                    log(f"[ERROR] {error_msg}", LOG_FILE)
-                    raise Exception(error_msg)
-                await asyncio.sleep(0.3)
 
-            # ==================================================================
+
+            # ====================================================================================
             # Быстрые крупные скроллы к форме, без телепортов
-            # ==================================================================
+            # ====================================================================================
             await smooth_scroll_to_form(page)
 
             # ====================================================================================

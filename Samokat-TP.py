@@ -404,29 +404,39 @@ async def emulate_user_reading(page, total_time, LOG_FILE):
 
 
 async def smooth_scroll_to_form(page):
+    # ====================================================================================
+    # Плавный, крупный и потом мелкий скролл к форме, без телепортов
+    # ====================================================================================
     form = await page.query_selector("div.form-wrapper")
-    if not form:
-        return
-    box = await form.bounding_box()
-    if not box:
-        return
-    viewport_h = await page.evaluate("window.innerHeight")
-    page_h = await page.evaluate("document.body.scrollHeight")
-    target = box["y"] + box["height"] / 2 - viewport_h / 2
-    target = max(0, min(target, page_h - viewport_h))
-    current_y = await page.evaluate("window.scrollY")
-
-    if target <= current_y:
-        await page.evaluate(f"window.scrollTo(0, {target})")
-        return
-
-    while current_y < target:
-        step = random.randint(120, 500)
-        current_y = min(current_y + step, target)
-        await page.evaluate(f"window.scrollTo(0, {current_y})")
-        await asyncio.sleep(random.uniform(0.1, 0.3))
-
-    await page.evaluate(f"window.scrollTo(0, {target})")
+    if form:
+        b = await form.bounding_box()
+        if b:
+            viewport_height = 768
+            center_screen = viewport_height / 2
+            while True:
+                current_y = await page.evaluate("window.scrollY")
+                b = await form.bounding_box()
+                center_form = b["y"] + b["height"] / 2
+                diff = (center_form - center_screen)
+                abs_diff = abs(diff)
+                if abs_diff > 400:
+                    step = 300
+                elif abs_diff > 120:
+                    step = 100
+                elif abs_diff > 40:
+                    step = 40
+                else:
+                    break
+                if diff > 0:
+                    new_y = current_y + step
+                else:
+                    new_y = current_y - step
+                await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
+                rand_x = random.randint(100, 1200)
+                rand_y = random.randint(100, 700)
+                await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
+                await asyncio.sleep(random.uniform(0.04, 0.09))
+            log("[INFO] Скролл завершён, форма в центре экрана")
 
 async def run_browser():
     global screenshot_path

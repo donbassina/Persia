@@ -189,7 +189,7 @@ async def fill_full_name(page, name, retries=3):
 async def fill_city(page, city, retries=3):
     for attempt in range(retries):
         try:
-            input_box = page.get_by_placeholder("Выберите город")
+            input_box = page.get_by_placeholder("Выберите город").nth(0)
             await input_box.click()
             await page.wait_for_timeout(100)
             await input_box.fill("")
@@ -436,7 +436,7 @@ async def smooth_scroll_to_form(page):
                 rand_y = random.randint(100, 700)
                 await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
                 await asyncio.sleep(random.uniform(0.04, 0.09))
-            log("[INFO] Скролл завершён, форма в центре экрана")
+            log("[INFO] Скролл завершён, форма в центре экрана", LOG_FILE)
 
 async def run_browser():
     global screenshot_path

@@ -217,9 +217,9 @@ screenshot_path = ""
 
 def _human_delay() -> float:
     """Возвращает задержку перед следующим символом, s."""
-    base = random.uniform(0.09, 0.22)
-    jitter = random.uniform(-0.015, 0.015)
-    return max(0.09, base + jitter)
+    base = random.gammavariate(2.0, 0.07)
+    jitter = 0   # не нужен; гамма уже даёт разброс
+    return max(0.09, min(base, 0.22))
 
 async def human_type(page, selector: str, text: str):
     """Вводит `text` в элемент `selector` максимально «по-человечески»."""
@@ -231,11 +231,11 @@ async def human_type(page, selector: str, text: str):
     for char in text:
         delay = _human_delay() * coef
         if not char.isdigit() and random.random() < 0.04:
-            await page.keyboard.press(char)
+            await page.keyboard.type(char, delay=0)
             await asyncio.sleep(delay)
             await page.keyboard.press("Backspace")
             total += delay
-        await page.keyboard.press(char)
+        await page.keyboard.type(char, delay=0)
         await asyncio.sleep(delay)
         total += delay
 
@@ -415,7 +415,7 @@ async def human_type_city_autocomplete(page, selector: str, text: str):
 
     for char in text:
         delay = _human_delay() * coef
-        await page.keyboard.press(char)
+        await page.keyboard.type(char, delay=0)
         await asyncio.sleep(delay)
         total += delay
 

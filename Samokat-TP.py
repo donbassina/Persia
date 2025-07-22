@@ -78,6 +78,39 @@ if sys.stderr.encoding.lower() != "utf-8":
 
 BROWSER_CLOSED_MANUALLY = False
 
+# === P-6. Единый фильтр для блокировки «лишних» запросов ===
+first_abort_logged = False        # замыкание для единственного лога
+
+async def should_abort(route):
+    """
+    Абортирует:
+      • любые ресурсы с resource_type in {"image", "media"}
+      • запросы, у которых в header-ах:
+            status 204/206  ИЛИ  Content-Length < 512
+    Всё остальное пропускает.
+    """
+    global first_abort_logged
+    req = route.request
+    r_type = req.resource_type
+    headers = req.headers
+    clen = int(headers.get("content-length", "1024"))
+    status = int(headers.get(":status", 200))
+
+    must_abort = (r_type in ("image", "media")) or \
+                 (status in (204, 206)) or \
+                 (clen < 512)
+
+    if not must_abort:
+        await route.continue_()
+        return
+
+    if not first_abort_logged:
+        log(f"[INFO] ABORT {req.method} {req.url} "
+            f"({r_type}, len≈{headers.get('content-length','?')})", LOG_FILE)
+        first_abort_logged = True
+
+    await route.abort()
+
 
 
 
@@ -685,19 +718,7 @@ if (window.WebGL2RenderingContext) {{
         page = await context.new_page()
         cursor = create_cursor(page)
 
-        async def abort_request(route, request):
-            log(f"[INFO] ABORT {request.url}", LOG_FILE)
-            await route.abort()
-
-        blocked_patterns = [
-            "**/*.{mp4,webm}",
-            "*/gtag/*",
-            "*/googletagmanager/*",
-            "*/google-analytics/*",
-            "*/mc.yandex.ru/*",
-        ]
-        for pattern in blocked_patterns:
-            await context.route(pattern, abort_request)
+        await context.route("**/*", should_abort)
 
 
 

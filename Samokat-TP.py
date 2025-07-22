@@ -215,11 +215,31 @@ screenshot_path = ""
 # Этап 3. 
 # ====================================================================================
 
-async def human_type(page, selector, text, min_delay=0.10, max_delay=0.66):
+def _human_delay() -> float:
+    """Возвращает задержку перед следующим символом, s."""
+    base = random.uniform(0.09, 0.22)
+    jitter = random.uniform(-0.015, 0.015)
+    return max(0.09, base + jitter)
+
+async def human_type(page, selector: str, text: str):
+    """Вводит `text` в элемент `selector` максимально «по-человечески»."""
     await page.focus(selector)
+    n = len(text)
+    coef = 0.6 if n <= 3 else 1.15 if n > 20 else 1.0
+    total = 0.0
+
     for char in text:
-        await page.keyboard.type(char)
-        await asyncio.sleep(random.uniform(min_delay, max_delay))
+        delay = _human_delay() * coef
+        if not char.isdigit() and random.random() < 0.04:
+            await page.keyboard.press(char)
+            await asyncio.sleep(delay)
+            await page.keyboard.press("Backspace")
+            total += delay
+        await page.keyboard.press(char)
+        await asyncio.sleep(delay)
+        total += delay
+
+    log(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}', LOG_FILE)
 
 
 
@@ -386,29 +406,20 @@ def get_partial_city(city_name):
     cut = max(1, int(len(city_name) * percent / 100))
     return city_name[:cut]
 
-async def human_type_city_autocomplete(page, selector, text, min_delay=0.11, max_delay=0.18):
+async def human_type_city_autocomplete(page, selector: str, text: str):
+    """То же, что human_type, но без опечаток (важно для автодополнения); задержки – такие же, лог тот же."""
     await page.focus(selector)
+    n = len(text)
+    coef = 0.6 if n <= 3 else 1.15 if n > 20 else 1.0
+    total = 0.0
+
     for char in text:
-        await page.keyboard.type(char)
-        await page.evaluate("""
-            ({selector, char}) => {
-                var input = document.querySelector(selector);
-                if (input) {
-                    ['keydown', 'keyup', 'input'].forEach(eventType => {
-                        var event = new KeyboardEvent(eventType, {
-                            bubbles: true,
-                            cancelable: true,
-                            key: char,
-                            code: char,
-                            charCode: char.charCodeAt(0),
-                            keyCode: char.charCodeAt(0)
-                        });
-                        input.dispatchEvent(event);
-                    });
-                }
-            }
-        """, {"selector": selector, "char": char})
-        await asyncio.sleep(random.uniform(min_delay, max_delay))
+        delay = _human_delay() * coef
+        await page.keyboard.press(char)
+        await asyncio.sleep(delay)
+        total += delay
+
+    log(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}', LOG_FILE)
 
 
 

@@ -159,6 +159,8 @@ def load_cfg(
 
     overrides = {k: final[k] for k in final if defaults.get(k) != final[k]}
     log(f"[INFO] CONFIG loaded ok, overrides: {overrides}", LOG_FILE)
+    if not CFG:
+        CFG.update(final)
     return final
 
 

@@ -436,7 +436,7 @@ async def human_move_cursor(page, el):
     target_x = b["x"] + random.uniform(8, b["width"]  - 8)
     target_y = b["y"] + random.uniform(8, b["height"] - 8)
 
-    cur = await page.mouse.position()
+    cur = page.mouse.position
     pivots = []
     if random.random() < 0.7:
         pivots.append(
@@ -446,13 +446,13 @@ async def human_move_cursor(page, el):
             )
         )
     pivots.append((target_x, target_y))
-    last_x, last_y = cur
+    cur_x, cur_y = cur
     for x, y in pivots:
         await page.mouse.move(x, y, steps=random.randint(8, 20))
-        last_x, last_y = x, y
+        cur_x, cur_y = x, y
     await page.mouse.move(
-        last_x + random.uniform(-4, 4),
-        last_y + random.uniform(-3, 3),
+        cur_x + random.uniform(-4, 4),
+        cur_y + random.uniform(-3, 3),
         steps=3,
     )
     sel = (

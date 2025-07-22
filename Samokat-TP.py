@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import random
 from random import SystemRandom
 _rnd = SystemRandom()            # единый генератор на весь скрипт
 import asyncio
@@ -685,10 +684,20 @@ if (window.WebGL2RenderingContext) {{
         log("[INFO] Patched WebGL2 getParameter", LOG_FILE)
         page = await context.new_page()
         cursor = create_cursor(page)
-   
 
-        await context.route("**/*.{mp4,webm}", lambda r: r.abort())
-        await context.route("*/gtag/*",        lambda r: r.abort())
+        async def abort_request(route, request):
+            log(f"[INFO] ABORT {request.url}", LOG_FILE)
+            await route.abort()
+
+        blocked_patterns = [
+            "**/*.{mp4,webm}",
+            "*/gtag/*",
+            "*/googletagmanager/*",
+            "*/google-analytics/*",
+            "*/mc.yandex.ru/*",
+        ]
+        for pattern in blocked_patterns:
+            await context.route(pattern, abort_request)
 
 
 

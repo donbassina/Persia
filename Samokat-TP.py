@@ -105,17 +105,26 @@ WORK_DIR = os.path.dirname(__file__)
 
 
 
-async def is_form_visible(page):
-    return await page.evaluate("""
-        () => {
-            const el = document.querySelector('div.form-wrapper');
-            if (!el) return false;
-            const style = window.getComputedStyle(el);
-            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-            const rect = el.getBoundingClientRect();
-            return rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
-        }
-    """)
+
+async def get_form_position(page, selector="div.form-wrapper"):
+    el = await page.query_selector(selector)
+    if not el:
+        return None
+    box = await el.bounding_box()
+    if not box:
+        return None
+    return {
+        "top": box["y"],
+        "center": box["y"] + box["height"] / 2
+    }
+
+
+
+
+
+
+
+
 
 
 
@@ -428,9 +437,10 @@ async def emulate_user_reading(page, total_time, LOG_FILE):
 
 
 
-# --- 0000000000000000000000000000000000 ---
-# --- 0000000000000000000000000000000000 ---
-# --- 0000000000000000000000000000000000 ---
+# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
+# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
+# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
+
 
 
 
@@ -444,18 +454,47 @@ async def smooth_scroll_to_form(page):
         log("[WARN] div.form-wrapper не найден", LOG_FILE)
         return
 
-    b = await form.bounding_box()
-    if not b:
-        log("[WARN] Не удалось получить bounding_box формы", LOG_FILE)
-        return
-
-    viewport_height = 768
-    center_screen = viewport_height / 2
     while True:
-        current_y = await page.evaluate("window.scrollY")
         b = await form.bounding_box()
-        center_form = b["y"] + b["height"] / 2
-        diff = (center_form - center_screen)
+        if not b:
+            log("[WARN] Не удалось получить bounding_box формы", LOG_FILE)
+            return
+
+        form_top = b["y"]
+        viewport_height = await page.evaluate("window.innerHeight")
+        scroll_y = await page.evaluate("window.scrollY")
+
+        if 0 <= form_top < viewport_height // 4:
+            log(f"[SCROLL] Форма видна: form_top={form_top}, viewport_height={viewport_height}", LOG_FILE)
+            break
+
+        # --- HUMAN-LIKE SCROLL STEP + PAUSE ---
+        direction = 1 if form_top > 0 else -1
+        if direction > 0:
+            step = random.choice([random.randint(120, 350), random.randint(400, 800)])
+        else:
+            step = random.randint(80, 290)
+        new_y = scroll_y + direction * step
+        await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
+        log(f"[INFO] Скроллим {'вниз' if direction>0 else 'вверх'} на {step}", LOG_FILE)
+
+        # Остановки возле блоков с текстом
+        text_blocks = [".hero", ".about", ".benefits", ".form-wrapper"]
+        for sel in text_blocks:
+            el = await page.query_selector(sel)
+            if el:
+                b2 = await el.bounding_box()
+                if b2 and abs(b2["y"] - new_y) < 60:
+                    pause_t = random.uniform(1.2, 3.2)
+                    log(f"[INFO] Пауза у блока {sel} {pause_t:.1f} сек", LOG_FILE)
+                    await asyncio.sleep(pause_t)
+                    break
+
+        await asyncio.sleep(random.uniform(0.8, 2.1))
+
+
+        # Дальше стандартные шаги
+        diff = (form_top - viewport_height // 4)
         abs_diff = abs(diff)
         if abs_diff > 400:
             step = 300
@@ -464,18 +503,17 @@ async def smooth_scroll_to_form(page):
         elif abs_diff > 40:
             step = 40
         else:
-            break
-        if diff > 0:
-            new_y = current_y + step
-        else:
-            new_y = current_y - step
-        await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
-        rand_x = random.randint(100, 1200)
-        rand_y = random.randint(100, 700)
-        await page.mouse.move(rand_x, rand_y, steps=random.randint(6, 14))
-        await asyncio.sleep(random.uniform(0.04, 0.09))
+            step = 12
 
-    log("[INFO] Скролл завершён, форма в центре экрана")
+        if diff > 0:
+            new_y = scroll_y + step
+        else:
+            new_y = scroll_y - step
+        await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
+        log(f"[SCROLL] Маленький шаг: scroll_y={scroll_y} → {new_y}, form_top={form_top}, step={step}", LOG_FILE)
+        await asyncio.sleep(0.06)
+
+
 
 
 
@@ -589,7 +627,7 @@ async def run_browser():
 
     
             min_read   = 1.5                 # минимум «чтения», сек
-            base_read  = random.uniform(7, 15)
+            base_read  = random.uniform(10, 25)
             total_time = max(min_read, base_read - max(0, 7 - load_sec))
 
 

@@ -40,7 +40,10 @@ try:
     LOG_START_POS = os.path.getsize(LOG_FILE) if os.path.exists(LOG_FILE) else 0
     log(f"[INFO] Получены параметры: {params}", LOG_FILE)
 
-    EXTRA_UA     = params.get("ua", "Mozilla/5.0")
+    EXTRA_UA     = params.get(
+        "ua",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    )
     headless_flag = params.get("headless", False)
     webhook_url = params.get("Webhook", "")
 except Exception as e:
@@ -596,7 +599,14 @@ WebGLRenderingContext.prototype.getParameter = function(parameter){
     if (parameter === 37446) return "%s";
     return getParameter.call(this, parameter);
 };
-""" % (FP_WEBGL_VENDOR, FP_WEBGL_RENDERER))
+const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
+WebGL2RenderingContext.prototype.getParameter = function(parameter){
+    if (parameter === 37445) return "%s";
+    if (parameter === 37446) return "%s";
+    return getParameter2.call(this, parameter);
+};
+""" % (FP_WEBGL_VENDOR, FP_WEBGL_RENDERER, FP_WEBGL_VENDOR, FP_WEBGL_RENDERER))
+        log("[INFO] Patched WebGL2 getParameter", LOG_FILE)
         page = await context.new_page()
         cursor = create_cursor(page)
    

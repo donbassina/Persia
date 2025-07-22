@@ -21,7 +21,6 @@ import json
 import os
 from datetime import datetime
 from python_ghost_cursor.playwright_async import create_cursor
-from pathlib import Path
 from samokat_config import load_cfg
 
 def make_log_file(phone):
@@ -37,6 +36,7 @@ def log(msg, LOG_FILE):
         f.write(f"{ts}  {msg}\n")
 
 try:
+    from pathlib import Path
     params = json.load(sys.stdin)
     user_phone = params.get("user_phone", "")
     LOG_FILE = make_log_file(user_phone)
@@ -67,22 +67,6 @@ PAGE_GOTO_TIMEOUT = CFG["PAGE_GOTO_TIMEOUT"]
 FORM_WRAPPER_TIMEOUT = CFG["FORM_WRAPPER_TIMEOUT"]
 REDIRECT_TIMEOUT = CFG["REDIRECT_TIMEOUT"]
 MODAL_SELECTOR_TIMEOUT = CFG["MODAL_SELECTOR_TIMEOUT"]
-
-cfg_dict = {
-    "UA": EXTRA_UA,
-    "HEADLESS": headless_flag,
-    "BLOCK_PATTERNS": BLOCK_PATTERNS,
-    "HUMAN_DELAY_μ": HUMAN_DELAY_MU,
-    "HUMAN_DELAY_σ": HUMAN_DELAY_SIGMA,
-    "TYPO_PROB": TYPO_PROB,
-    "SCROLL_STEP": SCROLL_STEP,
-    "WEBHOOK_TIMEOUT": WEBHOOK_TIMEOUT,
-    "SELECT_ITEM_TIMEOUT": SELECT_ITEM_TIMEOUT,
-    "PAGE_GOTO_TIMEOUT": PAGE_GOTO_TIMEOUT,
-    "FORM_WRAPPER_TIMEOUT": FORM_WRAPPER_TIMEOUT,
-    "REDIRECT_TIMEOUT": REDIRECT_TIMEOUT,
-    "MODAL_SELECTOR_TIMEOUT": MODAL_SELECTOR_TIMEOUT,
-}
 
 # Дополнительные параметры из полученного JSON
 phone_from_Avito = params.get("phone_from_Avito", "")

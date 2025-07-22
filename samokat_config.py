@@ -67,13 +67,13 @@ def _convert(val: Any, typ: type) -> Any:
         return float(val)
     if typ is list:
         if isinstance(val, str):
-            return json.loads(val)
+            return [] if val == "" else json.loads(val)
         if isinstance(val, list):
             return val
         raise ValueError
     if typ is dict:
         if isinstance(val, str):
-            return json.loads(val)
+            return {} if val == "" else json.loads(val)
         if isinstance(val, dict):
             return val
         raise ValueError
@@ -134,8 +134,18 @@ def load_cfg(base_dir: Path, env_file: Path | None = None, cli_overrides: Mappin
 
     for key in list(result.keys()):
         if key not in final:
-            log(f"[WARN] Unknown cfg key {key}", LOG_FILE)
+            log(f"[WARN] Unknown cfg key {key} ignored", LOG_FILE)
 
     overrides = {k: final[k] for k in final if defaults.get(k) != final[k]}
     log(f"[INFO] CONFIG loaded ok, overrides: {overrides}", LOG_FILE)
     return final
+
+
+if __name__ == "__main__":
+    print(
+        json.dumps(
+            load_cfg(Path(__file__).parent),
+            indent=2,
+            ensure_ascii=False,
+        )
+    )

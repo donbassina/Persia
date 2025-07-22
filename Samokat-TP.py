@@ -44,7 +44,8 @@ try:
     log(f"[INFO] Получены параметры: {params}", LOG_FILE)
 
     webhook_url = params.get("Webhook", "")
-    CFG = load_cfg(base_dir=Path(__file__).parent)
+    overrides = dict(arg.split('=', 1) for arg in sys.argv[1:] if '=' in arg)
+    CFG = load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides)
 except Exception as e:
     print(f"[ERROR] Не удалось получить JSON из stdin: {e}")
     sys.exit(1)
@@ -66,7 +67,6 @@ PAGE_GOTO_TIMEOUT = CFG["PAGE_GOTO_TIMEOUT"]
 FORM_WRAPPER_TIMEOUT = CFG["FORM_WRAPPER_TIMEOUT"]
 REDIRECT_TIMEOUT = CFG["REDIRECT_TIMEOUT"]
 MODAL_SELECTOR_TIMEOUT = CFG["MODAL_SELECTOR_TIMEOUT"]
-RUN_TIMEOUT = CFG["RUN_TIMEOUT"]
 
 cfg_dict = {
     "UA": EXTRA_UA,
@@ -82,10 +82,7 @@ cfg_dict = {
     "FORM_WRAPPER_TIMEOUT": FORM_WRAPPER_TIMEOUT,
     "REDIRECT_TIMEOUT": REDIRECT_TIMEOUT,
     "MODAL_SELECTOR_TIMEOUT": MODAL_SELECTOR_TIMEOUT,
-    "RUN_TIMEOUT": RUN_TIMEOUT,
 }
-
-log(f"[INFO] CONFIG = {json.dumps(cfg_dict, ensure_ascii=False)}", LOG_FILE)
 
 # Дополнительные параметры из полученного JSON
 phone_from_Avito = params.get("phone_from_Avito", "")

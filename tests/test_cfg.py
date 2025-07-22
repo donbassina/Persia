@@ -1,5 +1,8 @@
+import pytest
 from pathlib import Path
 import sys
+
+pytest.importorskip("dotenv", reason="python-dotenv not installed")
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from samokat_config import load_cfg

@@ -19,9 +19,13 @@ except ImportError:                     # более старые версии
 import sys
 import json
 import os
+import contextlib
 from datetime import datetime
 from python_ghost_cursor.playwright_async import create_cursor
-from samokat_config import load_cfg
+from samokat_config import CFG, load_cfg, reload_cfg
+
+CLI_OVERRIDES: dict[str, str] = {}
+no_watch = False
 
 def make_log_file(phone):
     logs_dir = os.path.join(os.path.dirname(__file__), "Logs")
@@ -44,8 +48,11 @@ try:
     log(f"[INFO] Получены параметры: {params}", LOG_FILE)
 
     webhook_url = params.get("Webhook", "")
-    overrides = dict(arg.split('=', 1) for arg in sys.argv[1:] if '=' in arg)
-    CFG = load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides)
+    cli_args = sys.argv[1:]
+    no_watch = "--no-watch" in cli_args
+    overrides = dict(arg.split('=', 1) for arg in cli_args if "=" in arg)
+    CLI_OVERRIDES = overrides
+    reload_cfg(load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides))
 except Exception as e:
     print(f"[ERROR] Не удалось получить JSON из stdin: {e}")
     sys.exit(1)
@@ -54,19 +61,7 @@ import requests
 import time
 
 # === Load configuration values ===
-EXTRA_UA = CFG["UA"]
-headless_flag = CFG["HEADLESS"]
-BLOCK_PATTERNS = CFG["BLOCK_PATTERNS"]
-HUMAN_DELAY_MU = CFG["HUMAN_DELAY_μ"]
-HUMAN_DELAY_SIGMA = CFG["HUMAN_DELAY_σ"]
-TYPO_PROB = CFG["TYPO_PROB"]
-SCROLL_STEP = CFG["SCROLL_STEP"]
-WEBHOOK_TIMEOUT = CFG["WEBHOOK_TIMEOUT"]
-SELECT_ITEM_TIMEOUT = CFG["SELECT_ITEM_TIMEOUT"]
-PAGE_GOTO_TIMEOUT = CFG["PAGE_GOTO_TIMEOUT"]
-FORM_WRAPPER_TIMEOUT = CFG["FORM_WRAPPER_TIMEOUT"]
-REDIRECT_TIMEOUT = CFG["REDIRECT_TIMEOUT"]
-MODAL_SELECTOR_TIMEOUT = CFG["MODAL_SELECTOR_TIMEOUT"]
+# Configuration values are read directly from CFG at call sites
 
 # Дополнительные параметры из полученного JSON
 phone_from_Avito = params.get("phone_from_Avito", "")
@@ -114,7 +109,7 @@ async def should_abort(route):
     must_abort = (r_type in ("image", "media")) or \
                  (status in (204, 206)) or \
                  (clen < 512) or \
-                 any(p in url for p in BLOCK_PATTERNS)
+                 any(p in url for p in CFG["BLOCK_PATTERNS"])
 
     if not must_abort:
         await route.continue_()
@@ -195,7 +190,7 @@ def send_webhook(result, webhook_url):
         e = None
         for attempt in range(3):
             try:
-                resp = requests.post(webhook_url, json=result, timeout=WEBHOOK_TIMEOUT)
+                resp = requests.post(webhook_url, json=result, timeout=CFG["WEBHOOK_TIMEOUT"])
                 if 200 <= resp.status_code < 300:
                     return
                 raise Exception(f"Status {resp.status_code}")
@@ -204,6 +199,54 @@ def send_webhook(result, webhook_url):
                 log(f"[WARN] webhook fail, retry {attempt + 1} in 60s: {e}", LOG_FILE)
                 time.sleep(60)
         log(f"[FATAL] webhook 3rd fail: {e}", LOG_FILE)
+
+
+async def cfg_watcher():
+    """Watch .env and config_defaults.json for changes."""
+    from pathlib import Path
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+
+    base_dir = Path(__file__).parent
+    targets = {str(base_dir / ".env"), str(base_dir / "config_defaults.json")}
+    loop = asyncio.get_running_loop()
+    changed = asyncio.Event()
+
+    class Handler(FileSystemEventHandler):
+        def __init__(self):
+            self._timer = None
+
+        def on_any_event(self, event):
+            if event.is_directory or event.src_path not in targets:
+                return
+            if self._timer:
+                self._timer.cancel()
+            self._timer = loop.call_later(0.7, changed.set)
+
+    observer = Observer()
+    handler = Handler()
+    for t in targets:
+        observer.schedule(handler, os.path.dirname(t) or ".", recursive=False)
+    observer.start()
+
+    try:
+        while True:
+            await changed.wait()
+            changed.clear()
+            try:
+                new_cfg = load_cfg(base_dir=base_dir, cli_overrides=CLI_OVERRIDES, exit_on_error=False)
+            except Exception as e:
+                log(f"[ERROR] Bad config reload: {e}", LOG_FILE)
+                continue
+            old = dict(CFG)
+            new_cfg["HEADLESS"] = CFG["HEADLESS"]
+            reload_cfg(new_cfg)
+            diff_keys = [k for k in new_cfg if k != "HEADLESS" and new_cfg[k] != old.get(k)]
+            if diff_keys:
+                log(f"[INFO] CFG hot-reload, changed keys: {', '.join(diff_keys)}", LOG_FILE)
+    finally:
+        observer.stop()
+        observer.join()
 
 
 
@@ -244,7 +287,7 @@ FP_ACCEPT_LANGUAGE = "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
 FP_WEBGL_VENDOR = "Intel Inc."
 FP_WEBGL_RENDERER = "Intel Iris OpenGL Engine"
 
-log(f"[INFO] UA: {EXTRA_UA}", LOG_FILE)
+log(f"[INFO] UA: {CFG['UA']}", LOG_FILE)
 log(f"[INFO] Platform: {FP_PLATFORM}", LOG_FILE)
 log(f"[INFO] Device Memory: {FP_DEVICE_MEMORY}", LOG_FILE)
 log(f"[INFO] Hardware Concurrency: {FP_HARDWARE_CONCURRENCY}", LOG_FILE)
@@ -267,7 +310,7 @@ screenshot_path = ""
 
 def _human_delay() -> float:
     """Возвращает задержку перед следующим символом, s."""
-    base = _rnd.lognormvariate(HUMAN_DELAY_MU, HUMAN_DELAY_SIGMA)      # медиана ≈0.14
+    base = _rnd.lognormvariate(CFG["HUMAN_DELAY_μ"], CFG["HUMAN_DELAY_σ"])      # медиана ≈0.14
     return max(0.09, min(base, 0.22))
 
 async def human_type(page, selector: str, text: str):
@@ -279,7 +322,7 @@ async def human_type(page, selector: str, text: str):
 
     for char in text:
         delay = _human_delay() * coef
-        if not char.isdigit() and _rnd.random() < TYPO_PROB:
+        if not char.isdigit() and _rnd.random() < CFG["TYPO_PROB"]:
             await page.keyboard.type(char, delay=0)
             await asyncio.sleep(delay)
             await page.keyboard.press("Backspace")
@@ -324,7 +367,7 @@ async def fill_city(page, city, retries=3):
             await human_type_city_autocomplete(page, 'input[name="user_city"]', part_city)
 
             try:
-                await page.wait_for_selector('.form-list-item', timeout=SELECT_ITEM_TIMEOUT)
+                await page.wait_for_selector('.form-list-item', timeout=CFG["SELECT_ITEM_TIMEOUT"])
             except PWTimeoutError:
                 pass
 
@@ -377,7 +420,7 @@ async def fill_gender(page, gender, retries=3):
             await input_box.click()
             await page.wait_for_timeout(100)
             try:
-                await page.get_by_text(gender, exact=True).click(timeout=SELECT_ITEM_TIMEOUT)
+                await page.get_by_text(gender, exact=True).click(timeout=CFG["SELECT_ITEM_TIMEOUT"])
             except Exception:
                 value = await input_box.input_value()
                 if value.strip().lower() == gender.strip().lower():
@@ -420,7 +463,7 @@ async def fill_courier_type(page, courier_type, retries=3):
             await input_box.click()
             await page.wait_for_timeout(100)
             try:
-                await page.get_by_text(courier_type, exact=True).click(timeout=SELECT_ITEM_TIMEOUT)
+                await page.get_by_text(courier_type, exact=True).click(timeout=CFG["SELECT_ITEM_TIMEOUT"])
             except Exception:
                 value = await input_box.input_value()
                 if value.strip().lower() == courier_type.strip().lower():
@@ -529,8 +572,8 @@ async def emulate_user_reading(page, total_time, LOG_FILE):
 
         if action == "scroll_down":
             step = _rnd.choice([
-                _rnd.randint(*SCROLL_STEP["down1"]),
-                _rnd.randint(*SCROLL_STEP["down2"])
+                _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
+                _rnd.randint(*CFG["SCROLL_STEP"]["down2"])
             ])
             current_y = min(current_y + step, height-1)
             if step >= 400:
@@ -543,7 +586,7 @@ async def emulate_user_reading(page, total_time, LOG_FILE):
             log(f"[INFO] wheel вниз на {step}", LOG_FILE)
             await asyncio.sleep(_rnd.uniform(0.7, 1.7))
         elif action == "scroll_up":
-            step = _rnd.randint(*SCROLL_STEP["up"])
+            step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
             current_y = max(current_y - step, 0)
             await page.mouse.wheel(0, -step)
             log(f"[INFO] wheel вверх на {step}", LOG_FILE)
@@ -612,11 +655,11 @@ async def smooth_scroll_to_form(page):
         direction = 1 if form_top > 0 else -1
         if direction > 0:
             step = _rnd.choice([
-                _rnd.randint(*SCROLL_STEP["down1"]),
-                _rnd.randint(*SCROLL_STEP["down2"])
+                _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
+                _rnd.randint(*CFG["SCROLL_STEP"]["down2"])
             ])
         else:
-            step = _rnd.randint(*SCROLL_STEP["up"])
+            step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
         new_y = scroll_y + direction * step
         if step >= 400:
             parts = _rnd.randint(3, 6)
@@ -646,13 +689,13 @@ async def smooth_scroll_to_form(page):
         diff = (form_top - viewport_height // 4)
         abs_diff = abs(diff)
         if abs_diff > 400:
-            step = SCROLL_STEP["fine"][0]
+            step = CFG["SCROLL_STEP"]["fine"][0]
         elif abs_diff > 120:
-            step = SCROLL_STEP["fine"][1]
+            step = CFG["SCROLL_STEP"]["fine"][1]
         elif abs_diff > 40:
-            step = SCROLL_STEP["fine"][2]
+            step = CFG["SCROLL_STEP"]["fine"][2]
         else:
-            step = SCROLL_STEP["fine"][3]
+            step = CFG["SCROLL_STEP"]["fine"][3]
 
         if diff > 0:
             new_y = scroll_y + step
@@ -690,7 +733,7 @@ async def run_browser():
     async with async_playwright() as p:
 
         browser = await p.chromium.launch(
-            headless=headless_flag,
+            headless=CFG["HEADLESS"],
             channel="chrome",
             args=[
                 "--incognito",
@@ -702,7 +745,7 @@ async def run_browser():
 
 
         context = await browser.new_context(
-            user_agent=EXTRA_UA,
+            user_agent=CFG["UA"],
             locale=FP_LANGUAGES[0],
             timezone_id=tz,
             viewport={"width": 1366, "height": 768},
@@ -755,7 +798,7 @@ if (window.WebGL2RenderingContext) {{
                 await page.goto(
                     "https://go.cpatrafficpoint.ru/click?o=3&a=103",
                     wait_until="domcontentloaded",
-                    timeout=PAGE_GOTO_TIMEOUT
+                    timeout=CFG["PAGE_GOTO_TIMEOUT"]
                 )
                 log("[INFO] Страница загружена", LOG_FILE)
             except PWTimeoutError:
@@ -784,7 +827,7 @@ if (window.WebGL2RenderingContext) {{
                 raise Exception(error_msg)
 
             try:
-                await page.wait_for_selector("div.form-wrapper", timeout=FORM_WRAPPER_TIMEOUT)
+                await page.wait_for_selector("div.form-wrapper", timeout=CFG["FORM_WRAPPER_TIMEOUT"])
                 log("[INFO] Контент формы загружен (div.form-wrapper найден)", LOG_FILE)
             except Exception as e:
                 log(f"[WARN] div.form-wrapper не найден: {e}", LOG_FILE)
@@ -919,8 +962,8 @@ if (window.WebGL2RenderingContext) {{
                 # Этап 6. Ghost-cursor доводит курсор до кнопки + нативный клик + извлечение utm_term
                 # ====================================================================================
                 scroll_step = _rnd.choice([
-                    _rnd.randint(*SCROLL_STEP["down1"]),
-                    _rnd.randint(*SCROLL_STEP["down2"])
+                    _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
+                    _rnd.randint(*CFG["SCROLL_STEP"]["down2"])
                 ])
                 current_y = await page.evaluate("window.scrollY")
                 new_y = current_y + scroll_step
@@ -940,7 +983,7 @@ if (window.WebGL2RenderingContext) {{
                         # Ждём редирект (10 сек)
                         await page.wait_for_function(
                             f'document.location.href !== "{old_url}"',
-                            timeout=REDIRECT_TIMEOUT
+                            timeout=CFG["REDIRECT_TIMEOUT"]
                         )
                         log("[INFO] URL изменился — заявка успешно отправлена", LOG_FILE)
 
@@ -949,7 +992,7 @@ if (window.WebGL2RenderingContext) {{
 
                         if modal is None:
                             try:
-                                await page.wait_for_selector(modal_selector, timeout=MODAL_SELECTOR_TIMEOUT)
+                                await page.wait_for_selector(modal_selector, timeout=CFG["MODAL_SELECTOR_TIMEOUT"])
                                 log("[INFO] Всплывающее окно подтверждения появилось после ожидания", LOG_FILE)
                             except Exception as e:
                                 html_content = await page.content()
@@ -1008,12 +1051,23 @@ if (window.WebGL2RenderingContext) {{
 
 
 
+async def main():
+    watch_task = None
+    if not no_watch:
+        watch_task = asyncio.create_task(cfg_watcher())
+    try:
+        await asyncio.wait_for(run_browser(), timeout=CFG["RUN_TIMEOUT"])
+    finally:
+        if watch_task:
+            watch_task.cancel()
+            with contextlib.suppress(Exception):
+                await watch_task
+
+
 if __name__ == "__main__":
     try:
-        # общий предел на весь скрипт. Меняйте по нужде через конфиг
-        asyncio.run(asyncio.wait_for(run_browser(), timeout=CFG["RUN_TIMEOUT"]))
+        asyncio.run(main())
     except Exception as e:            # любая непойманная ошибка
-        # пишем в лог и всё-таки отдаём JSON, чтобы n8n не подвис
         log(f"[FATAL] {e}", LOG_FILE)
         fatal = {"error": f"UNCAUGHT {e.__class__.__name__}: {e}"}
         print(json.dumps(fatal, ensure_ascii=False))

@@ -6,6 +6,14 @@ import sys
 
 from dotenv import dotenv_values
 
+try:
+    from __main__ import log, LOG_FILE  # type: ignore
+except Exception:  # pragma: no cover - fallback when imported standalone
+    def log(msg, *_):
+        print(msg, file=sys.stderr)
+
+    LOG_FILE = None
+
 
 SCHEMA: dict[str, tuple[type, Any]] = {
     "UA": (str, lambda v: isinstance(v, str) and len(v) > 10),
@@ -17,6 +25,16 @@ SCHEMA: dict[str, tuple[type, Any]] = {
     "SCROLL_STEP": (dict, None),
     "RUN_TIMEOUT": (int, lambda v: isinstance(v, int) and 30 <= v <= 600),
 }
+
+for _k in (
+    "WEBHOOK_TIMEOUT",
+    "SELECT_ITEM_TIMEOUT",
+    "PAGE_GOTO_TIMEOUT",
+    "FORM_WRAPPER_TIMEOUT",
+    "REDIRECT_TIMEOUT",
+    "MODAL_SELECTOR_TIMEOUT",
+):
+    SCHEMA[_k] = (int, lambda v: isinstance(v, int) and v > 0)
 
 
 def _check_scroll_step(v: Any) -> bool:
@@ -66,7 +84,6 @@ def _convert(val: Any, typ: type) -> Any:
 
 def load_cfg(base_dir: Path, env_file: Path | None = None, cli_overrides: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Load and validate configuration."""
-    from __main__ import log, LOG_FILE  # type: ignore
 
     defaults_path = base_dir / "config_defaults.json"
     try:

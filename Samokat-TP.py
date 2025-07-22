@@ -592,20 +592,22 @@ async def run_browser():
         await context.add_init_script(f'Object.defineProperty(navigator, "deviceMemory", {{get: () => {FP_DEVICE_MEMORY}}})')
         await context.add_init_script(f'Object.defineProperty(navigator, "hardwareConcurrency", {{get: () => {FP_HARDWARE_CONCURRENCY}}})')
         await context.add_init_script(f'Object.defineProperty(navigator, "languages", {{get: () => {json.dumps(FP_LANGUAGES)}}})')
-        await context.add_init_script("""
+        await context.add_init_script(f"""
 const getParameter = WebGLRenderingContext.prototype.getParameter;
-WebGLRenderingContext.prototype.getParameter = function(parameter){
-    if (parameter === 37445) return "%s";
-    if (parameter === 37446) return "%s";
+WebGLRenderingContext.prototype.getParameter = function(parameter){{
+    if (parameter === 37445) return "{FP_WEBGL_VENDOR}";
+    if (parameter === 37446) return "{FP_WEBGL_RENDERER}";
     return getParameter.call(this, parameter);
-};
-const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
-WebGL2RenderingContext.prototype.getParameter = function(parameter){
-    if (parameter === 37445) return "%s";
-    if (parameter === 37446) return "%s";
-    return getParameter2.call(this, parameter);
-};
-""" % (FP_WEBGL_VENDOR, FP_WEBGL_RENDERER, FP_WEBGL_VENDOR, FP_WEBGL_RENDERER))
+}};
+if (window.WebGL2RenderingContext) {{
+    const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
+    WebGL2RenderingContext.prototype.getParameter = function(parameter){{
+        if (parameter === 37445) return "{FP_WEBGL_VENDOR}";
+        if (parameter === 37446) return "{FP_WEBGL_RENDERER}";
+        return getParameter2.call(this, parameter);
+    }};
+}}
+""")
         log("[INFO] Patched WebGL2 getParameter", LOG_FILE)
         page = await context.new_page()
         cursor = create_cursor(page)

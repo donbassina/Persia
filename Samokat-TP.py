@@ -174,6 +174,32 @@ TZ_BY_CITY = {
 }
 tz = TZ_BY_CITY.get(user_city, "Europe/Moscow")
 
+# === fingerprint values ===
+offset = random.choice([-1, 0, 1])
+if offset == -1:
+    tz = "Europe/Kaliningrad"
+elif offset == 1:
+    tz = "Europe/Samara"
+else:
+    tz = "Europe/Moscow"
+
+FP_PLATFORM = "Win32"
+FP_DEVICE_MEMORY = 8
+FP_HARDWARE_CONCURRENCY = 8
+FP_LANGUAGES = ["ru-RU", "ru"]
+FP_ACCEPT_LANGUAGE = "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
+FP_WEBGL_VENDOR = "Intel Inc."
+FP_WEBGL_RENDERER = "Intel Iris OpenGL Engine"
+
+log(f"[INFO] UA: {EXTRA_UA}", LOG_FILE)
+log(f"[INFO] Platform: {FP_PLATFORM}", LOG_FILE)
+log(f"[INFO] Device Memory: {FP_DEVICE_MEMORY}", LOG_FILE)
+log(f"[INFO] Hardware Concurrency: {FP_HARDWARE_CONCURRENCY}", LOG_FILE)
+log(f"[INFO] Languages: {FP_ACCEPT_LANGUAGE}", LOG_FILE)
+log(f"[INFO] Timezone: {tz}", LOG_FILE)
+log(f"[INFO] WebGL Vendor: {FP_WEBGL_VENDOR}", LOG_FILE)
+log(f"[INFO] WebGL Renderer: {FP_WEBGL_RENDERER}", LOG_FILE)
+
 
 
 POSTBACK = None
@@ -546,27 +572,33 @@ async def run_browser():
 
         context = await browser.new_context(
             user_agent=EXTRA_UA,
-            locale="ru-RU",
+            locale=FP_LANGUAGES[0],
             timezone_id=tz,
-            viewport={"width": 1366, "height": 768}
+            viewport={"width": 1366, "height": 768},
+            extra_http_headers={"Accept-Language": FP_ACCEPT_LANGUAGE},
         )
 
         # apply playwright-stealth anti-bot measures
         await stealth.Stealth().apply_stealth_async(context)
 
-        page = await context.new_page()
-
-
-
-
-
-
-        cursor = create_cursor(page)
-
 
 
 
         await context.add_init_script('Object.defineProperty(navigator,"webdriver",{get:()=>undefined})')
+        await context.add_init_script(f'Object.defineProperty(navigator, "platform", {{get: () => "{FP_PLATFORM}"}})')
+        await context.add_init_script(f'Object.defineProperty(navigator, "deviceMemory", {{get: () => {FP_DEVICE_MEMORY}}})')
+        await context.add_init_script(f'Object.defineProperty(navigator, "hardwareConcurrency", {{get: () => {FP_HARDWARE_CONCURRENCY}}})')
+        await context.add_init_script(f'Object.defineProperty(navigator, "languages", {{get: () => {json.dumps(FP_LANGUAGES)}}})')
+        await context.add_init_script("""
+const getParameter = WebGLRenderingContext.prototype.getParameter;
+WebGLRenderingContext.prototype.getParameter = function(parameter){
+    if (parameter === 37445) return "%s";
+    if (parameter === 37446) return "%s";
+    return getParameter.call(this, parameter);
+};
+""" % (FP_WEBGL_VENDOR, FP_WEBGL_RENDERER))
+        page = await context.new_page()
+        cursor = create_cursor(page)
    
 
         await context.route("**/*.{mp4,webm}", lambda r: r.abort())

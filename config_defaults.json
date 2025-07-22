@@ -1,0 +1,21 @@
+{
+  "UA": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "HEADLESS": false,
+  "BLOCK_PATTERNS": [],
+  "HUMAN_DELAY_μ": -2.14,
+  "HUMAN_DELAY_σ": 0.45,
+  "TYPO_PROB": 0.04,
+  "SCROLL_STEP": {
+    "down1": [120, 350],
+    "down2": [400, 800],
+    "up": [80, 290],
+    "fine": [300, 100, 40, 12]
+  },
+  "WEBHOOK_TIMEOUT": 10,
+  "SELECT_ITEM_TIMEOUT": 1500,
+  "PAGE_GOTO_TIMEOUT": 60000,
+  "FORM_WRAPPER_TIMEOUT": 30000,
+  "REDIRECT_TIMEOUT": 20000,
+  "MODAL_SELECTOR_TIMEOUT": 10000,
+  "RUN_TIMEOUT": 180
+}

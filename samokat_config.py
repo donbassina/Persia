@@ -51,6 +51,9 @@ def _check_scroll_step(v: Any) -> bool:
 
 SCHEMA["SCROLL_STEP"] = (dict, _check_scroll_step)
 
+# Current configuration, modified in-place on hot reloads
+CFG: dict[str, Any] = {}
+
 
 def _convert(val: Any, typ: type) -> Any:
     if typ is bool:
@@ -82,7 +85,13 @@ def _convert(val: Any, typ: type) -> Any:
     return val
 
 
-def load_cfg(base_dir: Path, env_file: Path | None = None, cli_overrides: Mapping[str, str] | None = None) -> dict[str, Any]:
+def load_cfg(
+    base_dir: Path,
+    env_file: Path | None = None,
+    cli_overrides: Mapping[str, str] | None = None,
+    *,
+    exit_on_error: bool = True,
+) -> dict[str, Any]:
     """Load and validate configuration."""
 
     defaults_path = base_dir / "config_defaults.json"
@@ -91,7 +100,9 @@ def load_cfg(base_dir: Path, env_file: Path | None = None, cli_overrides: Mappin
             defaults = json.load(f)
     except Exception as e:
         log(f"[FATAL] Bad config defaults: {e}", None)
-        sys.exit(1)
+        if exit_on_error:
+            sys.exit(1)
+        raise ValueError(f"Bad config defaults: {e}") from e
 
     env_path = env_file or (base_dir / ".env")
     env_data = dotenv_values(env_path) if env_path.exists() else {}
@@ -110,15 +121,21 @@ def load_cfg(base_dir: Path, env_file: Path | None = None, cli_overrides: Mappin
     for k, (typ, check_fn) in SCHEMA.items():
         if k not in result:
             log(f"[FATAL] Bad config missing {k}", LOG_FILE)
-            sys.exit(1)
+            if exit_on_error:
+                sys.exit(1)
+            raise ValueError(f"Bad config missing {k}")
         try:
             val = _convert(result[k], typ)
         except Exception:
             log(f"[FATAL] Bad config {k}", LOG_FILE)
-            sys.exit(1)
+            if exit_on_error:
+                sys.exit(1)
+            raise ValueError(f"Bad config {k}")
         if check_fn and not check_fn(val):
             log(f"[FATAL] Bad config {k}", LOG_FILE)
-            sys.exit(1)
+            if exit_on_error:
+                sys.exit(1)
+            raise ValueError(f"Bad config {k}")
         final[k] = val
 
     for k in [key for key in result.keys() if key.endswith("_TIMEOUT") and key not in final]:
@@ -126,10 +143,14 @@ def load_cfg(base_dir: Path, env_file: Path | None = None, cli_overrides: Mappin
             val = _convert(result[k], int)
         except Exception:
             log(f"[FATAL] Bad config {k}", LOG_FILE)
-            sys.exit(1)
+            if exit_on_error:
+                sys.exit(1)
+            raise ValueError(f"Bad config {k}")
         if val <= 0:
             log(f"[FATAL] Bad config {k}", LOG_FILE)
-            sys.exit(1)
+            if exit_on_error:
+                sys.exit(1)
+            raise ValueError(f"Bad config {k}")
         final[k] = val
 
     for key in list(result.keys()):
@@ -139,6 +160,12 @@ def load_cfg(base_dir: Path, env_file: Path | None = None, cli_overrides: Mappin
     overrides = {k: final[k] for k in final if defaults.get(k) != final[k]}
     log(f"[INFO] CONFIG loaded ok, overrides: {overrides}", LOG_FILE)
     return final
+
+
+def reload_cfg(new: dict[str, Any]) -> None:
+    """Atomically replace the global CFG contents."""
+    CFG.clear()
+    CFG.update(new)
 
 
 if __name__ == "__main__":

@@ -21,30 +21,8 @@ import json
 import os
 from datetime import datetime
 from python_ghost_cursor.playwright_async import create_cursor
-from dotenv import load_dotenv
-
-load_dotenv()
-
-CFG_FILE = os.path.join(os.path.dirname(__file__), "config_defaults.json")
-with open(CFG_FILE, encoding="utf-8") as f:
-    _CFG_DEFAULTS = json.load(f)
-
-
-def get_cfg(key, cast=str):
-    val = os.getenv(key)
-    if val is None:
-        val = _CFG_DEFAULTS.get(key)
-    if cast is bool:
-        return str(val).lower() in ("1", "true", "yes", "on")
-    if cast is int:
-        return int(val)
-    if cast is float:
-        return float(val)
-    if cast in (list, dict):
-        if isinstance(val, str):
-            return json.loads(val)
-        return val
-    return val
+from pathlib import Path
+from samokat_config import load_cfg
 
 def make_log_file(phone):
     logs_dir = os.path.join(os.path.dirname(__file__), "Logs")
@@ -66,6 +44,7 @@ try:
     log(f"[INFO] Получены параметры: {params}", LOG_FILE)
 
     webhook_url = params.get("Webhook", "")
+    CFG = load_cfg(base_dir=Path(__file__).parent)
 except Exception as e:
     print(f"[ERROR] Не удалось получить JSON из stdin: {e}")
     sys.exit(1)
@@ -74,20 +53,20 @@ import requests
 import time
 
 # === Load configuration values ===
-EXTRA_UA = get_cfg("UA")
-headless_flag = get_cfg("HEADLESS", bool)
-BLOCK_PATTERNS = get_cfg("BLOCK_PATTERNS", list)
-HUMAN_DELAY_MU = get_cfg("HUMAN_DELAY_μ", float)
-HUMAN_DELAY_SIGMA = get_cfg("HUMAN_DELAY_σ", float)
-TYPO_PROB = get_cfg("TYPO_PROB", float)
-SCROLL_STEP = get_cfg("SCROLL_STEP", dict)
-WEBHOOK_TIMEOUT = get_cfg("WEBHOOK_TIMEOUT", int)
-SELECT_ITEM_TIMEOUT = get_cfg("SELECT_ITEM_TIMEOUT", int)
-PAGE_GOTO_TIMEOUT = get_cfg("PAGE_GOTO_TIMEOUT", int)
-FORM_WRAPPER_TIMEOUT = get_cfg("FORM_WRAPPER_TIMEOUT", int)
-REDIRECT_TIMEOUT = get_cfg("REDIRECT_TIMEOUT", int)
-MODAL_SELECTOR_TIMEOUT = get_cfg("MODAL_SELECTOR_TIMEOUT", int)
-RUN_TIMEOUT = get_cfg("RUN_TIMEOUT", int)
+EXTRA_UA = CFG["UA"]
+headless_flag = CFG["HEADLESS"]
+BLOCK_PATTERNS = CFG["BLOCK_PATTERNS"]
+HUMAN_DELAY_MU = CFG["HUMAN_DELAY_μ"]
+HUMAN_DELAY_SIGMA = CFG["HUMAN_DELAY_σ"]
+TYPO_PROB = CFG["TYPO_PROB"]
+SCROLL_STEP = CFG["SCROLL_STEP"]
+WEBHOOK_TIMEOUT = CFG["WEBHOOK_TIMEOUT"]
+SELECT_ITEM_TIMEOUT = CFG["SELECT_ITEM_TIMEOUT"]
+PAGE_GOTO_TIMEOUT = CFG["PAGE_GOTO_TIMEOUT"]
+FORM_WRAPPER_TIMEOUT = CFG["FORM_WRAPPER_TIMEOUT"]
+REDIRECT_TIMEOUT = CFG["REDIRECT_TIMEOUT"]
+MODAL_SELECTOR_TIMEOUT = CFG["MODAL_SELECTOR_TIMEOUT"]
+RUN_TIMEOUT = CFG["RUN_TIMEOUT"]
 
 cfg_dict = {
     "UA": EXTRA_UA,
@@ -1051,7 +1030,7 @@ if (window.WebGL2RenderingContext) {{
 if __name__ == "__main__":
     try:
         # общий предел на весь скрипт. Меняйте по нужде через конфиг
-        asyncio.run(asyncio.wait_for(run_browser(), timeout=RUN_TIMEOUT))
+        asyncio.run(asyncio.wait_for(run_browser(), timeout=CFG["RUN_TIMEOUT"]))
     except Exception as e:            # любая непойманная ошибка
         # пишем в лог и всё-таки отдаём JSON, чтобы n8n не подвис
         log(f"[FATAL] {e}", LOG_FILE)

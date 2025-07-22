@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import random
+from random import SystemRandom
+_rnd = SystemRandom()            # единый генератор на весь скрипт
 import asyncio
 from playwright.async_api import async_playwright
 from playwright_stealth import stealth
@@ -178,7 +180,7 @@ TZ_BY_CITY = {
 tz = TZ_BY_CITY.get(user_city, "Europe/Moscow")
 
 # === fingerprint values ===
-offset = random.choice([-1, 0, 1])
+offset = _rnd.choice([-1, 0, 1])
 if offset == -1:
     tz = "Europe/Kaliningrad"
 elif offset == 1:
@@ -217,8 +219,7 @@ screenshot_path = ""
 
 def _human_delay() -> float:
     """Возвращает задержку перед следующим символом, s."""
-    base = random.gammavariate(2.0, 0.07)
-    jitter = 0   # не нужен; гамма уже даёт разброс
+    base = _rnd.lognormvariate(-2.14, 0.45)      # медиана ≈0.14
     return max(0.09, min(base, 0.22))
 
 async def human_type(page, selector: str, text: str):
@@ -230,7 +231,7 @@ async def human_type(page, selector: str, text: str):
 
     for char in text:
         delay = _human_delay() * coef
-        if not char.isdigit() and random.random() < 0.04:
+        if not char.isdigit() and _rnd.random() < 0.04:
             await page.keyboard.type(char, delay=0)
             await asyncio.sleep(delay)
             await page.keyboard.press("Backspace")
@@ -408,7 +409,7 @@ async def fill_policy_checkbox(page, retries=3):
 def get_partial_city(city_name):
     min_percent = 70
     max_percent = 85
-    percent = random.randint(min_percent, max_percent)
+    percent = _rnd.randint(min_percent, max_percent)
     cut = max(1, int(len(city_name) * percent / 100))
     return city_name[:cut]
 
@@ -433,26 +434,26 @@ async def human_move_cursor(page, el):
     b = await el.bounding_box()
     if not b:
         return
-    target_x = b["x"] + random.uniform(8, b["width"]  - 8)
-    target_y = b["y"] + random.uniform(8, b["height"] - 8)
+    target_x = b["x"] + _rnd.uniform(8, b["width"]  - 8)
+    target_y = b["y"] + _rnd.uniform(8, b["height"] - 8)
 
     cur = page.mouse.position
     pivots = []
-    if random.random() < 0.7:
+    if _rnd.random() < 0.7:
         pivots.append(
             (
-                (cur[0] + target_x) / 2 + random.uniform(-15, 15),
-                (cur[1] + target_y) / 2 + random.uniform(-15, 15),
+                (cur[0] + target_x) / 2 + _rnd.uniform(-15, 15),
+                (cur[1] + target_y) / 2 + _rnd.uniform(-15, 15),
             )
         )
     pivots.append((target_x, target_y))
     cur_x, cur_y = cur
     for x, y in pivots:
-        await page.mouse.move(x, y, steps=random.randint(8, 20))
+        await page.mouse.move(x, y, steps=_rnd.randint(8, 20))
         cur_x, cur_y = x, y
     await page.mouse.move(
-        cur_x + random.uniform(-4, 4),
-        cur_y + random.uniform(-3, 3),
+        cur_x + _rnd.uniform(-4, 4),
+        cur_y + _rnd.uniform(-3, 3),
         steps=3,
     )
     sel = (
@@ -473,54 +474,54 @@ async def emulate_user_reading(page, total_time, LOG_FILE):
     current_y = 0
 
     while asyncio.get_event_loop().time() - start_time < total_time:
-        action = random.choices(
+        action = _rnd.choices(
             ["scroll_down", "scroll_up", "pause", "mouse_wiggle", "to_block"],
             weights=[0.48, 0.14, 0.20, 0.06, 0.12]
         )[0]
 
         if action == "scroll_down":
-            step = random.choice([random.randint(120, 350), random.randint(400, 800)])
+            step = _rnd.choice([_rnd.randint(120, 350), _rnd.randint(400, 800)])
             current_y = min(current_y + step, height-1)
             if step >= 400:
-                parts = random.randint(3, 6)
+                parts = _rnd.randint(3, 6)
                 for _ in range(parts):
                     await page.mouse.wheel(0, step / parts)
-                    await asyncio.sleep(random.uniform(0.06, 0.12))
+                    await asyncio.sleep(_rnd.uniform(0.06, 0.12))
             else:
                 await page.mouse.wheel(0, step)
             log(f"[INFO] wheel вниз на {step}", LOG_FILE)
-            await asyncio.sleep(random.uniform(0.7, 1.7))
+            await asyncio.sleep(_rnd.uniform(0.7, 1.7))
         elif action == "scroll_up":
-            step = random.randint(80, 290)
+            step = _rnd.randint(80, 290)
             current_y = max(current_y - step, 0)
             await page.mouse.wheel(0, -step)
             log(f"[INFO] wheel вверх на {step}", LOG_FILE)
-            await asyncio.sleep(random.uniform(0.5, 1.1))
+            await asyncio.sleep(_rnd.uniform(0.5, 1.1))
         elif action == "pause":
-            t = random.uniform(1.2, 3.8)
+            t = _rnd.uniform(1.2, 3.8)
             log(f"[INFO] Пауза {t:.1f}", LOG_FILE)
             await asyncio.sleep(t)
         elif action == "mouse_wiggle":
-            x = random.randint(100, 1200)
-            y = random.randint(100, 680)
-            dx = random.randint(-10, 10)
-            dy = random.randint(-8, 8)
-            await page.mouse.move(x, y, steps=random.randint(4, 10))
-            await asyncio.sleep(random.uniform(0.08, 0.18))
+            x = _rnd.randint(100, 1200)
+            y = _rnd.randint(100, 680)
+            dx = _rnd.randint(-10, 10)
+            dy = _rnd.randint(-8, 8)
+            await page.mouse.move(x, y, steps=_rnd.randint(4, 10))
+            await asyncio.sleep(_rnd.uniform(0.08, 0.18))
             await page.mouse.move(x+dx, y+dy, steps=2)
             log(f"[INFO] Мышь дрожит ({x},{y})", LOG_FILE)
-            await asyncio.sleep(random.uniform(0.10, 0.22))
+            await asyncio.sleep(_rnd.uniform(0.10, 0.22))
         else:
-            sel = random.choice(blocks)
+            sel = _rnd.choice(blocks)
             el = await page.query_selector(sel)
             if el:
                 box = await el.bounding_box()
                 if box:
-                    x = box["x"] + random.uniform(12, box["width"]-12)
-                    y = box["y"] + random.uniform(12, box["height"]-12)
-                    await page.mouse.move(x, y, steps=random.randint(10, 22))
+                    x = box["x"] + _rnd.uniform(12, box["width"]-12)
+                    y = box["y"] + _rnd.uniform(12, box["height"]-12)
+                    await page.mouse.move(x, y, steps=_rnd.randint(10, 22))
                     log(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})", LOG_FILE)
-                    await asyncio.sleep(random.uniform(0.4, 1.3))
+                    await asyncio.sleep(_rnd.uniform(0.4, 1.3))
 
 
 
@@ -559,15 +560,15 @@ async def smooth_scroll_to_form(page):
         # --- HUMAN-LIKE SCROLL STEP + PAUSE ---
         direction = 1 if form_top > 0 else -1
         if direction > 0:
-            step = random.choice([random.randint(120, 350), random.randint(400, 800)])
+            step = _rnd.choice([_rnd.randint(120, 350), _rnd.randint(400, 800)])
         else:
-            step = random.randint(80, 290)
+            step = _rnd.randint(80, 290)
         new_y = scroll_y + direction * step
         if step >= 400:
-            parts = random.randint(3, 6)
+            parts = _rnd.randint(3, 6)
             for _ in range(parts):
                 await page.mouse.wheel(0, direction * step / parts)
-                await asyncio.sleep(random.uniform(0.06, 0.12))
+                await asyncio.sleep(_rnd.uniform(0.06, 0.12))
         else:
             await page.mouse.wheel(0, direction * step)
         log(f"[SCROLL] wheel {'down' if direction>0 else 'up'} {step}", LOG_FILE)
@@ -579,12 +580,12 @@ async def smooth_scroll_to_form(page):
             if el:
                 b2 = await el.bounding_box()
                 if b2 and abs(b2["y"] - new_y) < 60:
-                    pause_t = random.uniform(1.2, 3.2)
+                    pause_t = _rnd.uniform(1.2, 3.2)
                     log(f"[INFO] Пауза у блока {sel} {pause_t:.1f} сек", LOG_FILE)
                     await asyncio.sleep(pause_t)
                     break
 
-        await asyncio.sleep(random.uniform(0.8, 2.1))
+        await asyncio.sleep(_rnd.uniform(0.8, 2.1))
 
 
         # Дальше стандартные шаги
@@ -606,10 +607,10 @@ async def smooth_scroll_to_form(page):
             new_y = scroll_y - step
             delta = -step
         if abs(delta) >= 400:
-            parts = random.randint(3, 6)
+            parts = _rnd.randint(3, 6)
             for _ in range(parts):
                 await page.mouse.wheel(0, delta / parts)
-                await asyncio.sleep(random.uniform(0.06, 0.12))
+                await asyncio.sleep(_rnd.uniform(0.06, 0.12))
         else:
             await page.mouse.wheel(0, delta)
         log(f"[SCROLL] wheel small: scroll_y={scroll_y} → {new_y}, form_top={form_top}, step={step}", LOG_FILE)
@@ -744,7 +745,7 @@ if (window.WebGL2RenderingContext) {{
 
     
             min_read   = 1.5                 # минимум «чтения», сек
-            base_read  = random.uniform(10, 25)
+            base_read  = _rnd.uniform(10, 25)
             total_time = max(min_read, base_read - max(0, 7 - load_sec))
 
 
@@ -865,11 +866,11 @@ if (window.WebGL2RenderingContext) {{
                 # ====================================================================================
                 # Этап 6. Ghost-cursor доводит курсор до кнопки + нативный клик + извлечение utm_term
                 # ====================================================================================
-                scroll_step = random.choice([random.randint(120, 350), random.randint(400, 800)])
+                scroll_step = _rnd.choice([_rnd.randint(120, 350), _rnd.randint(400, 800)])
                 current_y = await page.evaluate("window.scrollY")
                 new_y = current_y + scroll_step
                 await page.evaluate(f"window.scrollTo(0, {new_y})")
-                await asyncio.sleep(random.uniform(0.7, 1.7))
+                await asyncio.sleep(_rnd.uniform(0.7, 1.7))
                 try:
                     button_selector = 'button.btn_submit'
                     old_url = page.url
@@ -902,7 +903,7 @@ if (window.WebGL2RenderingContext) {{
 
 
                         log("[INFO] Всплывающее окно подтверждения появилось", LOG_FILE)
-                        await asyncio.sleep(random.uniform(1, 4))
+                        await asyncio.sleep(_rnd.uniform(1, 4))
                         # ====== Этап 7: извлечение utm_term из финального URL ======
                         try:
                             final_url = page.url

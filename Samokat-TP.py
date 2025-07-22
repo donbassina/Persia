@@ -35,9 +35,12 @@ def make_log_file(phone):
     return log_file
 
 def log(msg, LOG_FILE):
-    ts = datetime.now()
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{ts}  {msg}\n")
+    ts_txt = f"{datetime.now()}  {msg}"
+    if LOG_FILE:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(ts_txt + "\n")
+    else:
+        print(ts_txt, file=sys.stderr)
 
 try:
     from pathlib import Path
@@ -48,8 +51,8 @@ try:
     log(f"[INFO] Получены параметры: {params}", LOG_FILE)
 
     webhook_url = params.get("Webhook", "")
-    cli_args = sys.argv[1:]
-    no_watch = "--no-watch" in cli_args
+    cli_args = [a for a in sys.argv[1:] if a != "--no-watch"]
+    no_watch = "--no-watch" in sys.argv[1:]
     overrides = dict(arg.split('=', 1) for arg in cli_args if "=" in arg)
     CLI_OVERRIDES = overrides
     reload_cfg(load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides))
@@ -246,7 +249,8 @@ async def cfg_watcher():
                 log(f"[INFO] CFG hot-reload, changed keys: {', '.join(diff_keys)}", LOG_FILE)
     finally:
         observer.stop()
-        observer.join()
+        if observer.is_alive():
+            observer.join()
 
 
 
@@ -286,8 +290,6 @@ FP_LANGUAGES = ["ru-RU", "ru"]
 FP_ACCEPT_LANGUAGE = "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
 FP_WEBGL_VENDOR = "Intel Inc."
 FP_WEBGL_RENDERER = "Intel Iris OpenGL Engine"
-
-log(f"[INFO] UA: {CFG['UA']}", LOG_FILE)
 log(f"[INFO] Platform: {FP_PLATFORM}", LOG_FILE)
 log(f"[INFO] Device Memory: {FP_DEVICE_MEMORY}", LOG_FILE)
 log(f"[INFO] Hardware Concurrency: {FP_HARDWARE_CONCURRENCY}", LOG_FILE)
@@ -802,7 +804,7 @@ if (window.WebGL2RenderingContext) {{
                 )
                 log("[INFO] Страница загружена", LOG_FILE)
             except PWTimeoutError:
-                error_msg = "Timeout 60 сек. при загрузке лендинга"
+                error_msg = f"Timeout {CFG['PAGE_GOTO_TIMEOUT'] // 1000} сек. при загрузке лендинга"
                 log(f"[ERROR] {error_msg}", LOG_FILE)
                 raise
             except PlaywrightError as e:

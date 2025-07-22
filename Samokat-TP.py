@@ -247,6 +247,7 @@ async def fill_full_name(page, name, retries=3):
     for attempt in range(retries):
         try:
             input_box = page.get_by_placeholder("ФИО")
+            await human_move_cursor(page, input_box)
             await input_box.click()
             await page.wait_for_timeout(100)
             await input_box.fill("")
@@ -266,6 +267,7 @@ async def fill_city(page, city, retries=3):
     for attempt in range(retries):
         try:
             input_box = page.get_by_placeholder("Выберите город").nth(0)
+            await human_move_cursor(page, input_box)
             await input_box.click()
             await page.wait_for_timeout(100)
             await input_box.fill("")
@@ -303,6 +305,7 @@ async def fill_phone(page, phone, retries=3):
     for attempt in range(retries):
         try:
             input_box = page.get_by_placeholder("+7 (900) 000 00-00")
+            await human_move_cursor(page, input_box)
             await input_box.click()
             await page.wait_for_timeout(100)
             await input_box.fill("")
@@ -321,6 +324,7 @@ async def fill_gender(page, gender, retries=3):
     for attempt in range(retries):
         try:
             input_box = page.get_by_placeholder("Выберите пол")
+            await human_move_cursor(page, input_box)
             await input_box.click()
             await page.wait_for_timeout(100)
             try:
@@ -344,6 +348,7 @@ async def fill_age(page, age, retries=3):
     for attempt in range(retries):
         try:
             input_box = page.get_by_placeholder("0")
+            await human_move_cursor(page, input_box)
             await input_box.click()
             await page.wait_for_timeout(100)
             await input_box.fill("")
@@ -362,6 +367,7 @@ async def fill_courier_type(page, courier_type, retries=3):
     for attempt in range(retries):
         try:
             input_box = page.get_by_placeholder("Выберите тип")
+            await human_move_cursor(page, input_box)
             await input_box.click()
             await page.wait_for_timeout(100)
             try:
@@ -422,6 +428,42 @@ async def human_type_city_autocomplete(page, selector: str, text: str):
     log(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}', LOG_FILE)
 
 
+async def human_move_cursor(page, el):
+    """Плавно ведёт курсор к случайной точке внутри элемента ``el``."""
+    b = await el.bounding_box()
+    if not b:
+        return
+    target_x = b["x"] + random.uniform(8, b["width"]  - 8)
+    target_y = b["y"] + random.uniform(8, b["height"] - 8)
+
+    cur = await page.mouse.position()
+    pivots = []
+    if random.random() < 0.7:
+        pivots.append(
+            (
+                (cur[0] + target_x) / 2 + random.uniform(-15, 15),
+                (cur[1] + target_y) / 2 + random.uniform(-15, 15),
+            )
+        )
+    pivots.append((target_x, target_y))
+    last_x, last_y = cur
+    for x, y in pivots:
+        await page.mouse.move(x, y, steps=random.randint(8, 20))
+        last_x, last_y = x, y
+    await page.mouse.move(
+        last_x + random.uniform(-4, 4),
+        last_y + random.uniform(-3, 3),
+        steps=3,
+    )
+    sel = (
+        await el.get_attribute("name")
+        or await el.get_attribute("placeholder")
+        or await el.evaluate("el => el.className")
+        or "element"
+    )
+    log(f"[INFO] Курсор к {sel} ({int(target_x)},{int(target_y)})", LOG_FILE)
+
+
 
 
 async def emulate_user_reading(page, total_time, LOG_FILE):
@@ -439,14 +481,20 @@ async def emulate_user_reading(page, total_time, LOG_FILE):
         if action == "scroll_down":
             step = random.choice([random.randint(120, 350), random.randint(400, 800)])
             current_y = min(current_y + step, height-1)
-            await page.evaluate(f"window.scrollTo(0, {current_y})")
-            log(f"[INFO] Скроллим вниз на {step}", LOG_FILE)
+            if step >= 400:
+                parts = random.randint(3, 6)
+                for _ in range(parts):
+                    await page.mouse.wheel(0, step / parts)
+                    await asyncio.sleep(random.uniform(0.06, 0.12))
+            else:
+                await page.mouse.wheel(0, step)
+            log(f"[INFO] wheel вниз на {step}", LOG_FILE)
             await asyncio.sleep(random.uniform(0.7, 1.7))
         elif action == "scroll_up":
             step = random.randint(80, 290)
             current_y = max(current_y - step, 0)
-            await page.evaluate(f"window.scrollTo(0, {current_y})")
-            log(f"[INFO] Скроллим вверх на {step}", LOG_FILE)
+            await page.mouse.wheel(0, -step)
+            log(f"[INFO] wheel вверх на {step}", LOG_FILE)
             await asyncio.sleep(random.uniform(0.5, 1.1))
         elif action == "pause":
             t = random.uniform(1.2, 3.8)
@@ -515,8 +563,14 @@ async def smooth_scroll_to_form(page):
         else:
             step = random.randint(80, 290)
         new_y = scroll_y + direction * step
-        await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
-        log(f"[INFO] Скроллим {'вниз' if direction>0 else 'вверх'} на {step}", LOG_FILE)
+        if step >= 400:
+            parts = random.randint(3, 6)
+            for _ in range(parts):
+                await page.mouse.wheel(0, direction * step / parts)
+                await asyncio.sleep(random.uniform(0.06, 0.12))
+        else:
+            await page.mouse.wheel(0, direction * step)
+        log(f"[SCROLL] wheel {'down' if direction>0 else 'up'} {step}", LOG_FILE)
 
         # Остановки возле блоков с текстом
         text_blocks = [".hero", ".about", ".benefits", ".form-wrapper"]
@@ -547,10 +601,18 @@ async def smooth_scroll_to_form(page):
 
         if diff > 0:
             new_y = scroll_y + step
+            delta = step
         else:
             new_y = scroll_y - step
-        await page.evaluate(f"window.scrollTo(0, {int(new_y)})")
-        log(f"[SCROLL] Маленький шаг: scroll_y={scroll_y} → {new_y}, form_top={form_top}, step={step}", LOG_FILE)
+            delta = -step
+        if abs(delta) >= 400:
+            parts = random.randint(3, 6)
+            for _ in range(parts):
+                await page.mouse.wheel(0, delta / parts)
+                await asyncio.sleep(random.uniform(0.06, 0.12))
+        else:
+            await page.mouse.wheel(0, delta)
+        log(f"[SCROLL] wheel small: scroll_y={scroll_y} → {new_y}, form_top={form_top}, step={step}", LOG_FILE)
         await asyncio.sleep(0.06)
 
 

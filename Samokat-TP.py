@@ -18,6 +18,11 @@ except ImportError:                     # более старые версии
 
 import sys
 import json
+
+def _to_bool(val: str | bool) -> bool:
+    if isinstance(val, bool):
+        return val
+    return str(val).lower() in {"1", "true", "yes", "on"}
 import os
 from datetime import datetime
 from python_ghost_cursor.playwright_async import create_cursor
@@ -27,6 +32,7 @@ CLI_PROXY: str | None = None
 proxy_url: str | None = None
 LOG_FILE: str | None = None
 LOG_START_POS: int = 0
+json_headless: bool | None = None
 
 def make_log_file(phone):
     logs_dir = os.path.join(os.path.dirname(__file__), "Logs")
@@ -48,6 +54,17 @@ from samokat_config import CFG, load_cfg
 try:
     from pathlib import Path
     params = json.load(sys.stdin)
+    json_headless_raw = params.get("headless")
+    if json_headless_raw is not None:
+        try:
+            json_headless = _to_bool(json_headless_raw)
+            if isinstance(json_headless_raw, str) and json_headless_raw.strip().lower() not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
+                raise ValueError
+        except ValueError:
+            print('{"error":"bad headless value"}')
+            sys.exit(1)
+    else:
+        json_headless = None     # не передали в JSON
     user_phone = params.get("user_phone", "")
     LOG_FILE = make_log_file(user_phone)
     LOG_START_POS = os.path.getsize(LOG_FILE) if os.path.exists(LOG_FILE) else 0
@@ -69,6 +86,8 @@ try:
     load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides)
     if proxy_url:
         log(f"[INFO] Proxy enabled: {proxy_url}", LOG_FILE)
+    if json_headless is not None:
+        log(f"[INFO] headless overridden by JSON → {json_headless}", LOG_FILE)
 except Exception as e:
     print(f"[ERROR] Не удалось получить JSON из stdin: {e}")
     sys.exit(1)
@@ -701,7 +720,7 @@ async def run_browser():
     async with async_playwright() as p:
 
         launch_kwargs = {
-            "headless": CFG["HEADLESS"],
+            "headless": json_headless if json_headless is not None else CFG["HEADLESS"],
             "channel": "chrome",
             "args": [
                 "--incognito",

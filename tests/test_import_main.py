@@ -5,7 +5,8 @@ pytest.importorskip("python_ghost_cursor", reason="ghost-cursor not installed")
 pytest.importorskip("watchdog.observers", reason="watchdog not installed")
 
 
-def test_import_main():
+@pytest.mark.parametrize("cli_proxy", ["", "--proxy=http://127.0.0.1:8888"])
+def test_import_main(cli_proxy):
     import importlib.util
     import sys
     import pathlib
@@ -20,7 +21,10 @@ def test_import_main():
     stdin = sys.stdin
     sys.stdin = io.StringIO("{}")
     argv_backup = sys.argv
-    sys.argv = ["Samokat-TP.py", "--no-watch"]
+    args = ["Samokat-TP.py", "--no-watch"]
+    if cli_proxy:
+        args.append(cli_proxy)
+    sys.argv = args
     try:
         spec.loader.exec_module(module)
     except Exception as e:

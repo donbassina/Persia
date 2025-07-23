@@ -25,6 +25,8 @@ from python_ghost_cursor.playwright_async import create_cursor
 from samokat_config import CFG, load_cfg, reload_cfg
 
 CLI_OVERRIDES: dict[str, str] = {}
+CLI_PROXY: str | None = None
+proxy_url: str | None = None
 no_watch = False
 
 def make_log_file(phone):
@@ -53,9 +55,20 @@ try:
     webhook_url = params.get("Webhook", "")
     cli_args = [a for a in sys.argv[1:] if a != "--no-watch"]
     no_watch = "--no-watch" in sys.argv[1:]
-    overrides = dict(arg.split('=', 1) for arg in cli_args if "=" in arg)
+    overrides = {}
+    CLI_PROXY = None
+    for arg in cli_args:
+        if arg.startswith("--proxy="):
+            CLI_PROXY = arg.split("=", 1)[1]
+        elif "=" in arg:
+            k, v = arg.split("=", 1)
+            overrides[k] = v
+    JSON_PROXY = params.get("proxy", "").strip() or None
+    proxy_url = CLI_PROXY or JSON_PROXY or None
     CLI_OVERRIDES = overrides
     reload_cfg(load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides))
+    if proxy_url:
+        log(f"[INFO] Proxy enabled: {proxy_url}", LOG_FILE)
 except Exception as e:
     print(f"[ERROR] Не удалось получить JSON из stdin: {e}")
     sys.exit(1)
@@ -734,16 +747,20 @@ async def run_browser():
     global screenshot_path
     async with async_playwright() as p:
 
-        browser = await p.chromium.launch(
-            headless=CFG["HEADLESS"],
-            channel="chrome",
-            args=[
+        launch_kwargs = {
+            "headless": CFG["HEADLESS"],
+            "channel": "chrome",
+            "args": [
                 "--incognito",
                 "--disable-gpu",
                 "--no-sandbox",
-                "--disable-dev-shm-usage"
-            ]
-        )
+                "--disable-dev-shm-usage",
+            ],
+        }
+        if proxy_url:
+            launch_kwargs["proxy"] = {"server": proxy_url}
+
+        browser = await p.chromium.launch(**launch_kwargs)
 
 
         context = await browser.new_context(

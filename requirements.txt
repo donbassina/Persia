@@ -4,6 +4,6 @@ playwright>=1.44
 # stealth plug-in (keep old pinned commit → оно стабильнее)
 playwright-stealth==2.0.0
 # cursor movement automation
-ghost-cursor==0.0.7 # pip package; import = python_ghost_cursor
+python-ghost-cursor>=1.4  # pip package; import = python_ghost_cursor
 # only for local checks (optional): leave or drop
 pytest>=7.0

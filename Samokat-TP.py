@@ -19,15 +19,14 @@ except ImportError:                     # более старые версии
 import sys
 import json
 import os
-import contextlib
 from datetime import datetime
 from python_ghost_cursor.playwright_async import create_cursor
-from samokat_config import CFG, load_cfg, reload_cfg
 
 CLI_OVERRIDES: dict[str, str] = {}
 CLI_PROXY: str | None = None
 proxy_url: str | None = None
-no_watch = False
+LOG_FILE: str | None = None
+LOG_START_POS: int = 0
 
 def make_log_file(phone):
     logs_dir = os.path.join(os.path.dirname(__file__), "Logs")
@@ -44,6 +43,8 @@ def log(msg, LOG_FILE):
     else:
         print(ts_txt, file=sys.stderr)
 
+from samokat_config import CFG, load_cfg
+
 try:
     from pathlib import Path
     params = json.load(sys.stdin)
@@ -53,8 +54,7 @@ try:
     log(f"[INFO] Получены параметры: {params}", LOG_FILE)
 
     webhook_url = params.get("Webhook", "")
-    cli_args = [a for a in sys.argv[1:] if a != "--no-watch"]
-    no_watch = "--no-watch" in sys.argv[1:]
+    cli_args = sys.argv[1:]
     overrides = {}
     CLI_PROXY = None
     for arg in cli_args:
@@ -66,7 +66,7 @@ try:
     JSON_PROXY = params.get("proxy", "").strip() or None
     proxy_url = CLI_PROXY or JSON_PROXY or None
     CLI_OVERRIDES = overrides
-    reload_cfg(load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides))
+    load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides)
     if proxy_url:
         log(f"[INFO] Proxy enabled: {proxy_url}", LOG_FILE)
 except Exception as e:
@@ -217,53 +217,6 @@ def send_webhook(result, webhook_url):
         log(f"[FATAL] webhook 3rd fail: {e}", LOG_FILE)
 
 
-async def cfg_watcher():
-    """Watch .env and config_defaults.json for changes."""
-    from pathlib import Path
-    from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler
-
-    base_dir = Path(__file__).parent
-    targets = {str(base_dir / ".env"), str(base_dir / "config_defaults.json")}
-    loop = asyncio.get_running_loop()
-    changed = asyncio.Event()
-
-    class Handler(FileSystemEventHandler):
-        def __init__(self):
-            self._timer = None
-
-        def on_any_event(self, event):
-            if event.is_directory or event.src_path not in targets:
-                return
-            if self._timer:
-                self._timer.cancel()
-            self._timer = loop.call_later(0.7, changed.set)
-
-    observer = Observer()
-    handler = Handler()
-    for t in targets:
-        observer.schedule(handler, os.path.dirname(t) or ".", recursive=False)
-    observer.start()
-
-    try:
-        while True:
-            await changed.wait()
-            changed.clear()
-            try:
-                new_cfg = load_cfg(base_dir=base_dir, cli_overrides=CLI_OVERRIDES, exit_on_error=False)
-            except Exception as e:
-                log(f"[ERROR] Bad config reload: {e}", LOG_FILE)
-                continue
-            old = dict(CFG)
-            new_cfg["HEADLESS"] = CFG["HEADLESS"]
-            reload_cfg(new_cfg)
-            diff_keys = [k for k in new_cfg if k != "HEADLESS" and new_cfg[k] != old.get(k)]
-            if diff_keys:
-                log(f"[INFO] CFG hot-reload, changed keys: {', '.join(diff_keys)}", LOG_FILE)
-    finally:
-        observer.stop()
-        if observer.is_alive():
-            observer.join()
 
 
 
@@ -1071,16 +1024,7 @@ if (window.WebGL2RenderingContext) {{
 
 
 async def main():
-    watch_task = None
-    if not no_watch:
-        watch_task = asyncio.create_task(cfg_watcher())
-    try:
-        await asyncio.wait_for(run_browser(), timeout=CFG["RUN_TIMEOUT"])
-    finally:
-        if watch_task:
-            watch_task.cancel()
-            with contextlib.suppress(Exception):
-                await watch_task
+    await asyncio.wait_for(run_browser(), timeout=CFG["RUN_TIMEOUT"])
 
 
 if __name__ == "__main__":

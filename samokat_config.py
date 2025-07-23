@@ -6,13 +6,7 @@ import sys
 
 from dotenv import dotenv_values
 
-try:
-    from __main__ import log, LOG_FILE  # type: ignore
-except Exception:  # pragma: no cover - fallback when imported standalone
-    def log(msg, *_):
-        print(msg, file=sys.stderr)
-
-    LOG_FILE = None
+from __main__ import log, LOG_FILE  # type: ignore
 
 
 SCHEMA: dict[str, tuple[type, Any]] = {
@@ -51,7 +45,6 @@ def _check_scroll_step(v: Any) -> bool:
 
 SCHEMA["SCROLL_STEP"] = (dict, _check_scroll_step)
 
-# Current configuration, modified in-place on hot reloads
 CFG: dict[str, Any] = {}
 
 
@@ -89,8 +82,6 @@ def load_cfg(
     base_dir: Path,
     env_file: Path | None = None,
     cli_overrides: Mapping[str, str] | None = None,
-    *,
-    exit_on_error: bool = True,
 ) -> dict[str, Any]:
     """Load and validate configuration."""
 
@@ -100,9 +91,7 @@ def load_cfg(
             defaults = json.load(f)
     except Exception as e:
         log(f"[FATAL] Bad config defaults: {e}", None)
-        if exit_on_error:
-            sys.exit(1)
-        raise ValueError(f"Bad config defaults: {e}") from e
+        sys.exit(1)
 
     env_path = env_file or (base_dir / ".env")
     env_data = dotenv_values(env_path) if env_path.exists() else {}
@@ -121,21 +110,15 @@ def load_cfg(
     for k, (typ, check_fn) in SCHEMA.items():
         if k not in result:
             log(f"[FATAL] Bad config missing {k}", LOG_FILE)
-            if exit_on_error:
-                sys.exit(1)
-            raise ValueError(f"Bad config missing {k}")
+            sys.exit(1)
         try:
             val = _convert(result[k], typ)
         except Exception:
             log(f"[FATAL] Bad config {k}", LOG_FILE)
-            if exit_on_error:
-                sys.exit(1)
-            raise ValueError(f"Bad config {k}")
+            sys.exit(1)
         if check_fn and not check_fn(val):
             log(f"[FATAL] Bad config {k}", LOG_FILE)
-            if exit_on_error:
-                sys.exit(1)
-            raise ValueError(f"Bad config {k}")
+            sys.exit(1)
         final[k] = val
 
     for k in [key for key in result.keys() if key.endswith("_TIMEOUT") and key not in final]:
@@ -143,14 +126,10 @@ def load_cfg(
             val = _convert(result[k], int)
         except Exception:
             log(f"[FATAL] Bad config {k}", LOG_FILE)
-            if exit_on_error:
-                sys.exit(1)
-            raise ValueError(f"Bad config {k}")
+            sys.exit(1)
         if val <= 0:
             log(f"[FATAL] Bad config {k}", LOG_FILE)
-            if exit_on_error:
-                sys.exit(1)
-            raise ValueError(f"Bad config {k}")
+            sys.exit(1)
         final[k] = val
 
     for key in list(result.keys()):
@@ -162,12 +141,6 @@ def load_cfg(
     if not CFG:
         CFG.update(final)
     return final
-
-
-def reload_cfg(new: dict[str, Any]) -> None:
-    """Atomically replace the global CFG contents."""
-    CFG.clear()
-    CFG.update(new)
 
 
 if __name__ == "__main__":

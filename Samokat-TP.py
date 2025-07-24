@@ -1,19 +1,9 @@
 # -*- coding: utf-8 -*-
 from random import SystemRandom
 _rnd = SystemRandom()            # единый генератор на весь скрипт
-import random
 import asyncio
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
-
-# Динамическое определение UA под версию Chromium
-def _chromium_ua(browser) -> str:
-    ver = browser.version().split()[1]  # '125.0.6422.60'
-    return (
-        f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        f"AppleWebKit/537.36 (KHTML, like Gecko) "
-        f"Chrome/{ver} Safari/537.36"
-    )
+from playwright_stealth import stealth
 
 # --- универсальный импорт исключений Playwright (+ таймаут) ------------------
 try:                                    # Playwright ≥ 1.43.0
@@ -239,8 +229,7 @@ async def get_form_position(page, selector="div.form-wrapper"):
 def send_webhook(result, webhook_url):
     if webhook_url:
         e = None
-        _delays = [15, 30, 45]
-        for attempt, delay in enumerate(_delays, start=1):
+        for attempt in range(3):
             try:
                 resp = requests.post(webhook_url, json=result, timeout=CFG["WEBHOOK_TIMEOUT"])
                 if 200 <= resp.status_code < 300:
@@ -248,8 +237,8 @@ def send_webhook(result, webhook_url):
                 raise Exception(f"Status {resp.status_code}")
             except Exception as exc:
                 e = exc
-                log(f"[WARN] webhook fail, retry {attempt} in {delay}s: {e}", LOG_FILE)
-                time.sleep(delay)
+                log(f"[WARN] webhook fail, retry {attempt + 1} in 60s: {e}", LOG_FILE)
+                time.sleep(60)
         log(f"[FATAL] webhook 3rd fail: {e}", LOG_FILE)
 
 
@@ -257,25 +246,33 @@ def send_webhook(result, webhook_url):
 
 
 # ==== тайм-зона по крупным городам РФ ====
-def _city_to_tz(city: str) -> str | None:
-    mapping = {
-        "Москва": "Europe/Moscow",
-        "Санкт-Петербург": "Europe/Moscow",
-        "Нижний Новгород": "Europe/Moscow",
-        "Казань": "Europe/Moscow",
-        "Воронеж": "Europe/Moscow",
-        "Ростов-на-Дону": "Europe/Moscow",
-        "Волгоград": "Europe/Volgograd",
-        "Самара": "Europe/Samara",  # UTC+4
-        "Екатеринбург": "Asia/Yekaterinburg",  # UTC+5
-        "Челябинск": "Asia/Yekaterinburg",
-        "Уфа": "Asia/Yekaterinburg",
-        "Пермь": "Asia/Yekaterinburg",
-        "Омск": "Asia/Omsk",  # UTC+6
-        "Новосибирск": "Asia/Novosibirsk",  # UTC+7
-        "Красноярск": "Asia/Krasnoyarsk",
-    }
-    return mapping.get(city)
+TZ_BY_CITY = {
+    "Москва":            "Europe/Moscow",
+    "Санкт-Петербург":   "Europe/Moscow",
+    "Нижний Новгород":   "Europe/Moscow",
+    "Казань":            "Europe/Moscow",
+    "Воронеж":           "Europe/Moscow",
+    "Ростов-на-Дону":    "Europe/Moscow",
+    "Волгоград":         "Europe/Volgograd",
+    "Самара":            "Europe/Samara",          # UTC+4
+    "Екатеринбург":      "Asia/Yekaterinburg",     # UTC+5
+    "Челябинск":         "Asia/Yekaterinburg",
+    "Уфа":               "Asia/Yekaterinburg",
+    "Пермь":             "Asia/Yekaterinburg",
+    "Омск":              "Asia/Omsk",              # UTC+6
+    "Новосибирск":       "Asia/Novosibirsk",       # UTC+7
+    "Красноярск":        "Asia/Krasnoyarsk",
+}
+tz = TZ_BY_CITY.get(user_city, "Europe/Moscow")
+
+# === fingerprint values ===
+offset = _rnd.choice([-1, 0, 1])
+if offset == -1:
+    tz = "Europe/Kaliningrad"
+elif offset == 1:
+    tz = "Europe/Samara"
+else:
+    tz = "Europe/Moscow"
 
 FP_PLATFORM = "Win32"
 FP_DEVICE_MEMORY = 8
@@ -284,6 +281,15 @@ FP_LANGUAGES = ["ru-RU", "ru"]
 FP_ACCEPT_LANGUAGE = "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
 FP_WEBGL_VENDOR = "Intel Inc."
 FP_WEBGL_RENDERER = "Intel Iris OpenGL Engine"
+log(f"[INFO] Platform: {FP_PLATFORM}", LOG_FILE)
+log(f"[INFO] Device Memory: {FP_DEVICE_MEMORY}", LOG_FILE)
+log(f"[INFO] Hardware Concurrency: {FP_HARDWARE_CONCURRENCY}", LOG_FILE)
+log(f"[INFO] Languages: {FP_ACCEPT_LANGUAGE}", LOG_FILE)
+log(f"[INFO] Timezone: {tz}", LOG_FILE)
+log(f"[INFO] WebGL Vendor: {FP_WEBGL_VENDOR}", LOG_FILE)
+log(f"[INFO] WebGL Renderer: {FP_WEBGL_RENDERER}", LOG_FILE)
+
+
 
 POSTBACK = None
 
@@ -734,48 +740,20 @@ async def run_browser():
 
         browser = await p.chromium.launch(**launch_kwargs)
 
-        _VIEWPORTS = [(1920, 1080), (1366, 768), (1536, 864), (1440, 900)]
-        vw, vh = random.choice(_VIEWPORTS)
-        device_mem = random.choice([4, 8, 12, 16])
-        hwc = random.choice([4, 6, 8, 12])
-        tz_id = _city_to_tz(user_city) or "Europe/Moscow"
-
-        log(f"[INFO] UA {_chromium_ua(browser)}", LOG_FILE)
-        log(f"[INFO] Viewport {vw}x{vh}", LOG_FILE)
-        log(f"[INFO] Device Memory: {device_mem}", LOG_FILE)
-        log(f"[INFO] Hardware Concurrency: {hwc}", LOG_FILE)
-        log(f"[INFO] Timezone: {tz_id}", LOG_FILE)
-
-        global FP_DEVICE_MEMORY, FP_HARDWARE_CONCURRENCY
-        FP_DEVICE_MEMORY = device_mem
-        FP_HARDWARE_CONCURRENCY = hwc
 
         context = await browser.new_context(
-            viewport={"width": vw, "height": vh},
-            device_scale_factor=1,
-            locale="ru-RU",
-            user_agent=_chromium_ua(browser),
-            timezone_id=tz_id,
-            user_agent_data={
-                "platform": "Windows",
-                "brands": [{"brand": "Chromium", "version": browser.version().split()[1]}],
-                "mobile": False,
-                "bitness": "64",
-                "architecture": "x86",
-            },
+            user_agent=CFG["UA"],
+            locale=FP_LANGUAGES[0],
+            timezone_id=tz,
+            viewport={"width": 1366, "height": 768},
             extra_http_headers={"Accept-Language": FP_ACCEPT_LANGUAGE},
         )
 
-        page = await context.new_page()
-        await stealth_async(
-            page,
-            fix_hairline=True,
-            enable_canvas=True,
-            enable_webgl=True,
-            enable_audio=True,
-            enable_rtc=True,
-            run_on_insecure_origins=True,
-        )
+        # apply playwright-stealth anti-bot measures
+        await stealth.Stealth().apply_stealth_async(context)
+
+
+
 
         await context.add_init_script('Object.defineProperty(navigator,"webdriver",{get:()=>undefined})')
         await context.add_init_script(f'Object.defineProperty(navigator, "platform", {{get: () => "{FP_PLATFORM}"}})')
@@ -799,6 +777,7 @@ if (window.WebGL2RenderingContext) {{
 }}
 """)
         log("[INFO] Patched WebGL2 getParameter", LOG_FILE)
+        page = await context.new_page()
         cursor = create_cursor(page)
 
         await context.route("**/*", should_abort)

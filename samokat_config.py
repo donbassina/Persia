@@ -32,16 +32,18 @@ for _k in (
 
 
 def _check_scroll_step(v: Any) -> bool:
+    """
+    Более гибкая проверка: допускаем любые ключи.
+    Требования:
+      • v — словарь
+      • каждое значение — список целых чисел
+    """
     if not isinstance(v, dict):
         return False
-    keys = {"down1", "down2", "up", "fine"}
-    if set(v.keys()) != keys:
-        return False
-    if not (all(isinstance(v[k], list) for k in keys)):
-        return False
-    if len(v["down1"]) != 2 or len(v["down2"]) != 2 or len(v["up"]) != 2 or len(v["fine"]) != 4:
-        return False
-    return all(isinstance(i, int) for k in keys for i in v[k])
+    for lst in v.values():
+        if not (isinstance(lst, list) and all(isinstance(i, int) for i in lst)):
+            return False
+    return True
 
 SCHEMA["SCROLL_STEP"] = (dict, _check_scroll_step)
 

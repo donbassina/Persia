@@ -34,12 +34,16 @@ LOG_FILE: str | None = None
 LOG_START_POS: int = 0
 json_headless: bool | None = None
 
-def make_log_file(phone):
-    logs_dir = os.path.join(os.path.dirname(__file__), "Logs")
-    os.makedirs(logs_dir, exist_ok=True)
+def make_log_file(logs_dir: str, phone: str) -> str:
     date_str = datetime.now().strftime("%d.%m.%Y")
-    log_file = os.path.join(logs_dir, f"{date_str}-{phone}.txt")
-    return log_file
+    base = f"{date_str}-{phone}"
+    idx = 0
+    while True:
+        suffix = "" if idx == 0 else f"({idx})"
+        path = os.path.join(logs_dir, f"{base}{suffix}.txt")
+        if not os.path.exists(path):
+            return path
+        idx += 1
 
 def log(msg, LOG_FILE):
     ts_txt = f"{datetime.now()}  {msg}"
@@ -66,7 +70,9 @@ try:
     else:
         json_headless = None     # не передали в JSON
     user_phone = params.get("user_phone", "")
-    LOG_FILE = make_log_file(user_phone)
+    logs_dir = os.path.join(os.path.dirname(__file__), "Logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    LOG_FILE = make_log_file(logs_dir, user_phone)
     LOG_START_POS = os.path.getsize(LOG_FILE) if os.path.exists(LOG_FILE) else 0
     log(f"[INFO] Получены параметры: {params}", LOG_FILE)
 
@@ -895,8 +901,15 @@ if (window.WebGL2RenderingContext) {{
             screenshot_dir = os.path.join(WORK_DIR, "Media", "Screenshots")
             os.makedirs(screenshot_dir, exist_ok=True)
             date_str = datetime.now().strftime("%d.%m.%Y")
-            screenshot_name = f"{date_str}-{user_phone}.png"
-            screenshot_path = os.path.join(screenshot_dir, screenshot_name)
+            base = f"{date_str}-{user_phone}"
+            idx = 0
+            while True:
+                suffix = "" if idx == 0 else f"({idx})"
+                screenshot_name = f"{base}{suffix}.png"
+                screenshot_path = os.path.join(screenshot_dir, screenshot_name)
+                if not os.path.exists(screenshot_path):
+                    break
+                idx += 1
             await page.screenshot(path=screenshot_path, full_page=False)
             log(f"[INFO] Скриншот формы сохранён: {screenshot_path}", LOG_FILE)
 
@@ -1011,7 +1024,8 @@ if (window.WebGL2RenderingContext) {{
                                     POSTBACK = final_url[start:end]
                                 log(f"[INFO] POSTBACK: {POSTBACK}", LOG_FILE)
                             else:
-                                log("[WARN] utm_term не найден в ссылке", LOG_FILE)
+                                log("[ERROR] utm_term не найден в ссылке", LOG_FILE)
+                                raise Exception("utm_term not found in final URL")
                         except Exception as e:
                             log(f"[ERROR] Ошибка на этапе извлечения utm_term: {e}", LOG_FILE)
                     except Exception as e:

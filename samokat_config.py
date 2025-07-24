@@ -10,7 +10,6 @@ from __main__ import log, LOG_FILE  # type: ignore
 
 
 SCHEMA: dict[str, tuple[type, Any]] = {
-    "UA": (str, lambda v: isinstance(v, str) and len(v) > 10),
     "HEADLESS": (bool, lambda v: isinstance(v, bool)),
     "BLOCK_PATTERNS": (list, lambda v: isinstance(v, list) and all(isinstance(x, str) and x != "" for x in v)),
     "HUMAN_DELAY_μ": (float, lambda v: isinstance(v, (int, float))),

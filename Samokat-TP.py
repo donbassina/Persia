@@ -1030,18 +1030,6 @@ if (window.WebGL2RenderingContext) {{
         finally:
             await context.close()
             await browser.close()
-            # ====================================================================================
-            # Этап 9. Удаляем только свой профиль с ретраем
-            # ====================================================================================
-            
-            
-
-
-
-
-
-
-
 async def main():
     await asyncio.wait_for(run_browser(), timeout=CFG["RUN_TIMEOUT"])
 

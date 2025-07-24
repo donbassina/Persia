@@ -7,3 +7,4 @@ playwright-stealth==2.0.0
 python-ghost-cursor==0.1.1
 # only for local checks (optional): leave or drop
 pytest>=7.0
+requests>=2.0

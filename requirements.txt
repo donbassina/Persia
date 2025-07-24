@@ -2,7 +2,7 @@ python-dotenv>=1.0
 # core browser automation
 playwright>=1.44
 # stealth plug-in (keep old pinned commit → оно стабильнее)
-playwright-stealth>=2.0.0,<2.1
+playwright-stealth==2.0.0
 # cursor movement automation
 python-ghost-cursor==0.1.1
 # only for local checks (optional): leave or drop

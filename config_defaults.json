@@ -1,5 +1,5 @@
 {
-  "UA": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "UA": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
   "HEADLESS": false,
   "BLOCK_PATTERNS": [],
   "HUMAN_DELAY_μ": -2.14,
@@ -17,5 +17,5 @@
   "FORM_WRAPPER_TIMEOUT": 30000,
   "REDIRECT_TIMEOUT": 20000,
   "MODAL_SELECTOR_TIMEOUT": 10000,
-  "RUN_TIMEOUT": 180
+  "RUN_TIMEOUT": 360
 }

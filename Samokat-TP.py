@@ -27,7 +27,7 @@ except ImportError:  # более старые версии
 # ------------------------------------------------------------------------------
 
 from samokat_config import CFG, load_cfg
-from utils import RunContext, log, make_log_file, version_check
+from utils import RunContext, log, make_log_file, version_check, load_selectors
 
 
 _REQUIRED = {
@@ -51,8 +51,6 @@ def _to_bool(val: str | bool) -> bool:
 
 
 try:
-    from pathlib import Path
-
     params = json.load(sys.stdin)
     json_headless_raw = params.get("headless")
     if json_headless_raw is not None:
@@ -1034,16 +1032,13 @@ if (window.WebGL2RenderingContext) {{
 async def main(ctx: RunContext):
     """Entry point for execution: load selectors then run browser."""
     global selectors
-    import yaml
-    import pathlib
-
     profile = params.get("selectors_profile", "default")
-    path = pathlib.Path("selectors") / f"{profile}.yml"
     try:
-        selectors = yaml.safe_load(path.read_text(encoding="utf-8"))
+        selectors = load_selectors(profile)
     except FileNotFoundError:
         raise RuntimeError(f"selectors profile '{profile}' not found")
 
+    path = Path("selectors") / f"{profile}.yml"
     log(f"[INFO] selectors profile: {profile} file: {path.resolve()}", ctx)
 
     await asyncio.wait_for(run_browser(ctx), timeout=CFG["RUN_TIMEOUT"])

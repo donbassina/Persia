@@ -1,10 +1,6 @@
-python-dotenv>=1.0
-# core browser automation
-playwright>=1.44
-# stealth plug-in 
-playwright-stealth==2.0.0
-# cursor movement automation
+playwright>=1.44,<2
+playwright-stealth>=2.0.0,<3
 python-ghost-cursor==0.1.1
-# only for local checks (optional): leave or drop
-pytest>=7.0
-requests>=2.0
+pytest>=7,<8
+requests>=2,<3
+python-dotenv>=1,<2

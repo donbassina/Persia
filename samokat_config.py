@@ -6,13 +6,17 @@ import sys
 
 from dotenv import dotenv_values
 
-from __main__ import log, LOG_FILE  # type: ignore
+from utils import RunContext, log
 
 
 SCHEMA: dict[str, tuple[type, Any]] = {
     "UA": (str, lambda v: isinstance(v, str) and len(v) > 10),
     "HEADLESS": (bool, lambda v: isinstance(v, bool)),
-    "BLOCK_PATTERNS": (list, lambda v: isinstance(v, list) and all(isinstance(x, str) and x != "" for x in v)),
+    "BLOCK_PATTERNS": (
+        list,
+        lambda v: isinstance(v, list)
+        and all(isinstance(x, str) and x != "" for x in v),
+    ),
     "HUMAN_DELAY_μ": (float, lambda v: isinstance(v, (int, float))),
     "HUMAN_DELAY_σ": (float, lambda v: isinstance(v, (int, float)) and v > 0),
     "TYPO_PROB": (float, lambda v: isinstance(v, (int, float)) and 0 <= v <= 0.3),
@@ -44,6 +48,7 @@ def _check_scroll_step(v: Any) -> bool:
         if not (isinstance(lst, list) and all(isinstance(i, int) for i in lst)):
             return False
     return True
+
 
 SCHEMA["SCROLL_STEP"] = (dict, _check_scroll_step)
 
@@ -82,6 +87,8 @@ def _convert(val: Any, typ: type) -> Any:
 
 def load_cfg(
     base_dir: Path,
+    *,
+    ctx: RunContext,
     env_file: Path | None = None,
     cli_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -92,7 +99,7 @@ def load_cfg(
         with open(defaults_path, encoding="utf-8") as f:
             defaults = json.load(f)
     except Exception as e:
-        log(f"[FATAL] Bad config defaults: {e}", None)
+        log(f"[FATAL] Bad config defaults: {e}", ctx)
         sys.exit(1)
 
     env_path = env_file or (base_dir / ".env")
@@ -103,7 +110,7 @@ def load_cfg(
     for src in (env_data, cli_overrides or {}):
         for k, v in src.items():
             if k not in defaults:
-                log(f"[WARN] Unknown cfg key {k}", LOG_FILE)
+                log(f"[WARN] Unknown cfg key {k}", ctx)
                 continue
             result[k] = v
 
@@ -111,35 +118,37 @@ def load_cfg(
 
     for k, (typ, check_fn) in SCHEMA.items():
         if k not in result:
-            log(f"[FATAL] Bad config missing {k}", LOG_FILE)
+            log(f"[FATAL] Bad config missing {k}", ctx)
             sys.exit(1)
         try:
             val = _convert(result[k], typ)
         except Exception:
-            log(f"[FATAL] Bad config {k}", LOG_FILE)
+            log(f"[FATAL] Bad config {k}", ctx)
             sys.exit(1)
         if check_fn and not check_fn(val):
-            log(f"[FATAL] Bad config {k}", LOG_FILE)
+            log(f"[FATAL] Bad config {k}", ctx)
             sys.exit(1)
         final[k] = val
 
-    for k in [key for key in result.keys() if key.endswith("_TIMEOUT") and key not in final]:
+    for k in [
+        key for key in result.keys() if key.endswith("_TIMEOUT") and key not in final
+    ]:
         try:
             val = _convert(result[k], int)
         except Exception:
-            log(f"[FATAL] Bad config {k}", LOG_FILE)
+            log(f"[FATAL] Bad config {k}", ctx)
             sys.exit(1)
         if val <= 0:
-            log(f"[FATAL] Bad config {k}", LOG_FILE)
+            log(f"[FATAL] Bad config {k}", ctx)
             sys.exit(1)
         final[k] = val
 
     for key in list(result.keys()):
         if key not in final:
-            log(f"[WARN] Unknown cfg key {key} ignored", LOG_FILE)
+            log(f"[WARN] Unknown cfg key {key} ignored", ctx)
 
     overrides = {k: final[k] for k in final if defaults.get(k) != final[k]}
-    log(f"[INFO] CONFIG loaded ok, overrides: {overrides}", LOG_FILE)
+    log(f"[INFO] CONFIG loaded ok, overrides: {overrides}", ctx)
     if not CFG:
         CFG.update(final)
     return final
@@ -148,7 +157,7 @@ def load_cfg(
 if __name__ == "__main__":
     print(
         json.dumps(
-            load_cfg(Path(__file__).parent),
+            load_cfg(Path(__file__).parent, ctx=RunContext()),
             indent=2,
             ensure_ascii=False,
         )

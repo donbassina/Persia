@@ -4,7 +4,7 @@
 # install deps
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-playwright install  # once, to download browser binaries
+playwright install chromium  # once, to download browser binaries
 ```
 
 Run script
@@ -42,11 +42,23 @@ Install locked versions:
 
 ```bash
 pip install -r requirements.lock
-playwright install
+playwright install chromium
 ```
 
 To update:
 
 ```bash
 tools/update_deps.sh && pytest
+```
+
+### Environment variables
+
+Configuration values can also be provided via a `.env` file in the project
+root. All loaded values are logged to `Logs/...txt`.
+
+Example `.env`:
+
+```
+UA="Mozilla/5.0 ..."
+HEADLESS=false
 ```

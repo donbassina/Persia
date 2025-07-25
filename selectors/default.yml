@@ -1,0 +1,9 @@
+# Селекторы формы по-умолчанию.
+# При необходимости создавайте дополнительные YAML-файлы
+# (например, `foodexpress.yml`) с той же схемой ключей.
+form:
+  name:      'input[name="name"]'          # поле «Имя»
+  phone:     'input[name="phone"]'         # поле «Телефон»
+  checkbox:  'input[type="checkbox"]'      # чекбокс согласия
+  submit:    'button[type="submit"]'       # кнопка «Отправить»
+  thank_you: '.modal-thanks'               # поп-ап «Спасибо»

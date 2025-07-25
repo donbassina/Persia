@@ -5,6 +5,7 @@
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium  # once, to download browser binaries
+python tools/init_selectors.py  # optional: create selectors template
 ```
 
 Run script

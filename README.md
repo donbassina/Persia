@@ -33,5 +33,5 @@ EOF
 cat params.json | python Samokat-TP.py --proxy=http://1.2.3.4:8080
 ```
 
-params.json – тот же JSON, который n8n отправляет в stdin. При отсутствии поля
+params.json – тот же JSON, который n8n отправляет в stdin (хз че эт). При отсутствии поля
 `headless` используется значение по умолчанию из `config_defaults.json`.

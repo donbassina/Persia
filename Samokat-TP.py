@@ -14,7 +14,7 @@ try:                                    # Playwright ≥ 1.43.0
 except ImportError:                     # более старые версии
     from playwright.async_api import PlaywrightError      # type: ignore
     from playwright.async_api import TimeoutError as PWTimeoutError   # type: ignore
-# -----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 import sys
 import json

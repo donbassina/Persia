@@ -40,6 +40,9 @@ version_check(_REQUIRED)
 
 _rnd = SystemRandom()  # единый генератор на весь скрипт
 
+# selectors loaded from YAML profile in ``main``
+selectors: dict | None = None
+
 
 def _to_bool(val: str | bool) -> bool:
     if isinstance(val, bool):
@@ -286,7 +289,7 @@ async def fill_full_name(page, name, ctx: RunContext, retries=3):
             await input_box.click()
             await page.wait_for_timeout(100)
             await input_box.fill("")
-            await human_type(page, 'input[name="user_name"]', name, ctx)
+            await human_type(page, selectors["form"]["name"], name, ctx)
             value = await input_box.input_value()
             if value.strip() == name.strip():
                 return True
@@ -346,7 +349,7 @@ async def fill_phone(page, phone, ctx: RunContext, retries=3):
             await input_box.click()
             await page.wait_for_timeout(100)
             await input_box.fill("")
-            await human_type(page, 'input[name="user_phone"]', phone, ctx)
+            await human_type(page, selectors["form"]["phone"], phone, ctx)
             value = await input_box.input_value()
             if value.strip() == phone.strip():
                 return True
@@ -431,11 +434,13 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
 async def fill_policy_checkbox(page, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            checkbox = await page.query_selector(".form-policy-checkbox")
+            checkbox = await page.query_selector(selectors["form"]["checkbox"])
             if checkbox:
                 await checkbox.click()
                 # Проверка: SVG-галочка появляется в DOM после клика
-                checked = await page.query_selector(".form-policy-checkbox svg")
+                checked = await page.query_selector(
+                    selectors["form"]["checkbox"] + " svg"
+                )
                 if checked:
                     return True
             await page.wait_for_timeout(200)
@@ -669,7 +674,6 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
 
 async def run_browser(ctx: RunContext):
     async with async_playwright() as p:
-
         launch_kwargs = {
             "headless": (
                 ctx.json_headless if ctx.json_headless is not None else CFG["HEADLESS"]
@@ -803,7 +807,6 @@ if (window.WebGL2RenderingContext) {{
             # Этап 4. Клик мышью по каждому полю, заполнение всех полей, установка галочки
             # ====================================================================================
             try:
-
                 log("[INFO] Вводим ФИО через fill_full_name", ctx)
                 await fill_full_name(page, user_name, ctx)
 
@@ -876,15 +879,19 @@ if (window.WebGL2RenderingContext) {{
                         return fallback;
                     };
                     return {
-                        name:    document.querySelector('input[name="user_name"]')?.value || "",
+                        name:    document.querySelector(%s)?.value || "",
                         city:    document.querySelector('input[name="user_city"]')?.value || "",
-                        phone:   document.querySelector('input[name="user_phone"]')?.value || "",
+                        phone:   document.querySelector(%s)?.value || "",
                         gender:  getSelectText("user_gender"),
                         age:     document.querySelector('input[name="user_age"]')?.value || "",
                         courier: getSelectText("user_courier_type")
                     }
                 }
                 """
+                    % (
+                        json.dumps(selectors["form"]["name"]),
+                        json.dumps(selectors["form"]["phone"]),
+                    )
                 )
                 required_fields = {
                     "Имя": values["name"],
@@ -923,7 +930,7 @@ if (window.WebGL2RenderingContext) {{
                 await page.evaluate(f"window.scrollTo(0, {new_y})")
                 await asyncio.sleep(_rnd.uniform(0.7, 1.7))
                 try:
-                    button_selector = "button.btn_submit"
+                    button_selector = selectors["form"]["submit"]
                     old_url = page.url
                     try:
                         await cursor.click(button_selector)
@@ -943,7 +950,7 @@ if (window.WebGL2RenderingContext) {{
                         )
                         log("[INFO] URL изменился — заявка успешно отправлена", ctx)
 
-                        modal_selector = "div.modal-message-content"
+                        modal_selector = selectors["form"]["thank_you"]
                         modal = await page.query_selector(modal_selector)
 
                         if modal is None:
@@ -956,6 +963,15 @@ if (window.WebGL2RenderingContext) {{
                                     "[INFO] Всплывающее окно подтверждения появилось после ожидания",
                                     ctx,
                                 )
+                            except PWTimeoutError:
+                                log("selector_not_found:thank_you", ctx)
+                                html_content = await page.content()
+                                log(
+                                    "[ERROR] Всплывающее окно подтверждения НЕ появилось после ожидания: Timeout",
+                                    ctx,
+                                )
+                                log(f"[DEBUG HTML CONTENT]: {html_content[:2000]}", ctx)
+                                raise
                             except Exception as e:
                                 html_content = await page.content()
                                 log(
@@ -1016,12 +1032,39 @@ if (window.WebGL2RenderingContext) {{
 
 
 async def main(ctx: RunContext):
+    """Entry point for execution: load selectors then run browser."""
+    global selectors
+    import yaml
+    import pathlib
+
+    profile = params.get("selectors_profile", "default")
+    path = pathlib.Path("selectors") / f"{profile}.yml"
+    try:
+        selectors = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise RuntimeError(f"selectors profile '{profile}' not found")
+
+    log(f"[INFO] selectors profile: {profile} file: {path.resolve()}", ctx)
+
     await asyncio.wait_for(run_browser(ctx), timeout=CFG["RUN_TIMEOUT"])
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main(ctx))
+    except RuntimeError as e:
+        if str(e).startswith("selectors profile"):
+            log(f"[FATAL] {e}", ctx)
+            fatal = {"phone": user_phone, "error": "selectors_profile_not_found"}
+            if not ctx.browser_closed_manually:
+                send_webhook(fatal, webhook_url, ctx)
+            print(json.dumps(fatal, ensure_ascii=False))
+            sys.exit(1)
+        else:
+            log(f"[FATAL] {e}", ctx)
+            fatal = {"error": f"UNCAUGHT {e.__class__.__name__}: {e}"}
+            print(json.dumps(fatal, ensure_ascii=False))
+            sys.exit(1)
     except Exception as e:  # любая непойманная ошибка
         log(f"[FATAL] {e}", ctx)
         fatal = {"error": f"UNCAUGHT {e.__class__.__name__}: {e}"}

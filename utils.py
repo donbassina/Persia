@@ -8,7 +8,13 @@ from datetime import datetime
 import os
 import sys
 
-__all__ = ["RunContext", "log", "make_log_file", "version_check"]
+__all__ = [
+    "RunContext",
+    "log",
+    "make_log_file",
+    "version_check",
+    "load_selectors",
+]
 
 
 @dataclass(slots=True)
@@ -65,3 +71,12 @@ def version_check(required: dict[str, tuple[str, str]]) -> None:
             sys.exit(f"[FATAL] package {pkg} not installed")
         if not (lo <= v < hi):
             sys.exit(f"[FATAL] {pkg} {v} not supported; need >={lo}, <{hi}")
+
+
+def load_selectors(profile: str = "default") -> dict:
+    """Return selectors dict loaded from ``selectors/<profile>.yml``."""
+    import yaml
+    import pathlib
+
+    path = pathlib.Path("selectors") / f"{profile}.yml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))

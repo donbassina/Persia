@@ -674,7 +674,6 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
 
 async def run_browser(ctx: RunContext):
     async with async_playwright() as p:
-
         launch_kwargs = {
             "headless": (
                 ctx.json_headless if ctx.json_headless is not None else CFG["HEADLESS"]
@@ -808,7 +807,6 @@ if (window.WebGL2RenderingContext) {{
             # Этап 4. Клик мышью по каждому полю, заполнение всех полей, установка галочки
             # ====================================================================================
             try:
-
                 log("[INFO] Вводим ФИО через fill_full_name", ctx)
                 await fill_full_name(page, user_name, ctx)
 
@@ -889,7 +887,8 @@ if (window.WebGL2RenderingContext) {{
                         courier: getSelectText("user_courier_type")
                     }
                 }
-                """ % (
+                """
+                    % (
                         json.dumps(selectors["form"]["name"]),
                         json.dumps(selectors["form"]["phone"]),
                     )

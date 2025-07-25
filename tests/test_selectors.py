@@ -17,4 +17,3 @@ def test_load_selectors_default_equals_explicit(tmp_path, monkeypatch):
 def test_load_selectors_missing(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_selectors("nonexistent_profile")
-

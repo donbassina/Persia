@@ -23,10 +23,14 @@ cat <<EOF | python Samokat-TP.py
 {
   "user_phone": "79991234567",
   "user_name":  "Вася",
-  "headless":   true
+  "headless":   true,
+  "selectors_profile": "default"
 }
 EOF
 ```
+
+Поле *selectors_profile* задаёт файл `selectors/<name>.yml`.
+Если не указано — используется `default`.
 
 С прокси
 
@@ -36,6 +40,18 @@ cat params.json | python Samokat-TP.py --proxy=http://1.2.3.4:8080
 
 params.json – тот же JSON, который n8n отправляет в stdin (хз че эт). При отсутствии поля
 `headless` используется значение по умолчанию из `config_defaults.json`.
+
+Смена профиля селекторов
+
+```bash
+cat <<EOF | python Samokat-TP.py
+{
+  "user_phone": "79991234567",
+  "user_name":  "Тест",
+  "selectors_profile": "foodexpress"
+}
+EOF
+```
 
 ### Dependencies
 

@@ -1,4 +1,18 @@
 # -*- coding: utf-8 -*-
+import sys
+_REQUIRED = {
+    "playwright": ("1.44", "2.0"),
+    "playwright-stealth": ("2.0.0", "3.0"),
+}
+from importlib.metadata import version, PackageNotFoundError
+for pkg, (lo, hi) in _REQUIRED.items():
+    try:
+        v = version(pkg)
+    except PackageNotFoundError:
+        sys.exit(f"[FATAL] package {pkg} not installed")
+    if not (lo <= v < hi):
+        sys.exit(f"[FATAL] {pkg} {v} not supported; need >={lo}, <{hi}")
+
 from random import SystemRandom
 _rnd = SystemRandom()            # единый генератор на весь скрипт
 import asyncio
@@ -16,7 +30,6 @@ except ImportError:                     # более старые версии
     from playwright.async_api import TimeoutError as PWTimeoutError   # type: ignore
 # ------------------------------------------------------------------------------
 
-import sys
 import json
 
 def _to_bool(val: str | bool) -> bool:

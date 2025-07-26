@@ -6,7 +6,10 @@ import sys
 
 from dotenv import dotenv_values
 
-from utils import RunContext, log
+from utils import RunContext
+from logger_setup import get_logger
+
+logger = get_logger("samokat.cfg")
 
 
 SCHEMA: dict[str, tuple[type, Any]] = {
@@ -99,7 +102,7 @@ def load_cfg(
         with open(defaults_path, encoding="utf-8") as f:
             defaults = json.load(f)
     except Exception as e:
-        log(f"[FATAL] Bad config defaults: {e}", ctx)
+        logger.error(f"[FATAL] Bad config defaults: {e}")
         sys.exit(1)
 
     env_path = env_file or (base_dir / ".env")
@@ -110,7 +113,7 @@ def load_cfg(
     for src in (env_data, cli_overrides or {}):
         for k, v in src.items():
             if k not in defaults:
-                log(f"[WARN] Unknown cfg key {k}", ctx)
+                logger.warning(f"[WARN] Unknown cfg key {k}")
                 continue
             result[k] = v
 
@@ -118,15 +121,15 @@ def load_cfg(
 
     for k, (typ, check_fn) in SCHEMA.items():
         if k not in result:
-            log(f"[FATAL] Bad config missing {k}", ctx)
+            logger.error(f"[FATAL] Bad config missing {k}")
             sys.exit(1)
         try:
             val = _convert(result[k], typ)
         except Exception:
-            log(f"[FATAL] Bad config {k}", ctx)
+            logger.error(f"[FATAL] Bad config {k}")
             sys.exit(1)
         if check_fn and not check_fn(val):
-            log(f"[FATAL] Bad config {k}", ctx)
+            logger.error(f"[FATAL] Bad config {k}")
             sys.exit(1)
         final[k] = val
 
@@ -136,19 +139,19 @@ def load_cfg(
         try:
             val = _convert(result[k], int)
         except Exception:
-            log(f"[FATAL] Bad config {k}", ctx)
+            logger.error(f"[FATAL] Bad config {k}")
             sys.exit(1)
         if val <= 0:
-            log(f"[FATAL] Bad config {k}", ctx)
+            logger.error(f"[FATAL] Bad config {k}")
             sys.exit(1)
         final[k] = val
 
     for key in list(result.keys()):
         if key not in final:
-            log(f"[WARN] Unknown cfg key {key} ignored", ctx)
+            logger.warning(f"[WARN] Unknown cfg key {key} ignored")
 
     overrides = {k: final[k] for k in final if defaults.get(k) != final[k]}
-    log(f"[INFO] CONFIG loaded ok, overrides: {overrides}", ctx)
+    logger.info("CONFIG loaded ok, overrides: %s", overrides)
     if not CFG:
         CFG.update(final)
     return final

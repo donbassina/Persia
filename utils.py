@@ -1,4 +1,4 @@
-"""Utilities: RunContext container and simple logging helpers."""
+"""Utilities: runtime context container and helper functions."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 import os
 import sys
+
+from logger_setup import get_logger
 
 __all__ = [
     "RunContext",
@@ -50,14 +52,8 @@ def make_log_file(logs_dir: str, phone: str) -> str:
         idx += 1
 
 
-def log(msg: str, ctx: RunContext | None = None) -> None:
-    """Write *msg* to ``ctx.log_file`` or stderr if context is missing."""
-    ts_txt = f"{datetime.now()}  {msg}"
-    if ctx and ctx.log_file:
-        with open(ctx.log_file, "a", encoding="utf-8") as f:
-            f.write(ts_txt + "\n")
-    else:
-        print(ts_txt, file=sys.stderr)
+# use ``logging`` module for all output
+log = get_logger("samokat").info
 
 
 def version_check(required: dict[str, tuple[str, str]]) -> None:

@@ -93,3 +93,6 @@ Example `.env`:
 UA="Mozilla/5.0 ..."
 HEADLESS=false
 ```
+
+В конце каждого лога есть строка RESULT: SUCCESS или RESULT: ERROR.
+Путь к лог-файлу и скриншоту возвращается в JSON-ответе.

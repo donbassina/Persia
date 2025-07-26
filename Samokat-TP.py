@@ -28,6 +28,7 @@ except ImportError:  # более старые версии
 
 from samokat_config import CFG, load_cfg
 from utils import RunContext, log, make_log_file, version_check, load_selectors
+from proxy_utils import parse_proxy, probe_proxy, ProxyError
 
 
 _REQUIRED = {
@@ -42,12 +43,31 @@ _rnd = SystemRandom()  # единый генератор на весь скри�
 
 # selectors loaded from YAML profile in ``main``
 selectors: dict | None = None
+proxy_cfg: dict | None = None
 
 
 def _to_bool(val: str | bool) -> bool:
     if isinstance(val, bool):
         return val
     return str(val).lower() in {"1", "true", "yes", "on"}
+
+
+def send_webhook(result, webhook_url, ctx: RunContext):
+    if webhook_url:
+        e = None
+        for attempt in range(3):
+            try:
+                resp = requests.post(
+                    webhook_url, json=result, timeout=CFG["WEBHOOK_TIMEOUT"]
+                )
+                if 200 <= resp.status_code < 300:
+                    return
+                raise Exception(f"Status {resp.status_code}")
+            except Exception as exc:
+                e = exc
+                log(f"[WARN] webhook fail, retry {attempt + 1} in 60s: {e}", ctx)
+                time.sleep(60)
+        log(f"[FATAL] webhook 3rd fail: {e}", ctx)
 
 
 try:
@@ -91,7 +111,7 @@ try:
             k, v = arg.split("=", 1)
             overrides[k] = v
     json_proxy = params.get("proxy", "").strip() or None
-    proxy_url = cli_proxy or json_proxy or None
+    proxy_url = json_proxy or cli_proxy or None
     ctx = RunContext(
         cli_overrides=overrides,
         cli_proxy=cli_proxy,
@@ -104,6 +124,25 @@ try:
     load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides, ctx=ctx)
     if proxy_url:
         log(f"[INFO] Proxy enabled: {proxy_url}", ctx)
+    if proxy_url:
+        try:
+            parsed = parse_proxy(proxy_url)
+            proxy_cfg = {
+                "server": f"{parsed['scheme']}://{parsed['host']}:{parsed['port']}"
+            }
+            if parsed.get("user"):
+                proxy_cfg["username"] = parsed["user"]
+            if parsed.get("password"):
+                proxy_cfg["password"] = parsed["password"]
+        except ProxyError:
+            log("[ERROR] bad_proxy_format", ctx)
+            fatal = {"phone": user_phone, "error": "bad_proxy_format"}
+            send_webhook(fatal, webhook_url, ctx)
+            print(json.dumps(fatal, ensure_ascii=False))
+            sys.exit(1)
+        if not probe_proxy(parsed):
+            log("[WARN] proxy_unavailable – continue without proxy", ctx)
+            proxy_cfg = None
     if ctx.json_headless is not None:
         log(f"[INFO] headless overridden by JSON → {ctx.json_headless}", ctx)
 except Exception as e:
@@ -180,24 +219,6 @@ async def get_form_position(page, selector="div.form-wrapper"):
     if not box:
         return None
     return {"top": box["y"], "center": box["y"] + box["height"] / 2}
-
-
-def send_webhook(result, webhook_url, ctx: RunContext):
-    if webhook_url:
-        e = None
-        for attempt in range(3):
-            try:
-                resp = requests.post(
-                    webhook_url, json=result, timeout=CFG["WEBHOOK_TIMEOUT"]
-                )
-                if 200 <= resp.status_code < 300:
-                    return
-                raise Exception(f"Status {resp.status_code}")
-            except Exception as exc:
-                e = exc
-                log(f"[WARN] webhook fail, retry {attempt + 1} in 60s: {e}", ctx)
-                time.sleep(60)
-        log(f"[FATAL] webhook 3rd fail: {e}", ctx)
 
 
 # ==== тайм-зона по крупным городам РФ ====
@@ -672,22 +693,21 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
 
 async def run_browser(ctx: RunContext):
     async with async_playwright() as p:
-        launch_kwargs = {
-            "headless": (
-                ctx.json_headless if ctx.json_headless is not None else CFG["HEADLESS"]
-            ),
-            "channel": "chrome",
-            "args": [
+        headless = (
+            ctx.json_headless if ctx.json_headless is not None else CFG["HEADLESS"]
+        )
+
+        browser = await p.chromium.launch(
+            proxy=proxy_cfg if proxy_cfg else None,
+            headless=headless,
+            channel="chrome",
+            args=[
                 "--incognito",
                 "--disable-gpu",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
             ],
-        }
-        if ctx.proxy_url:
-            launch_kwargs["proxy"] = {"server": ctx.proxy_url}
-
-        browser = await p.chromium.launch(**launch_kwargs)
+        )
 
         context = await browser.new_context(
             user_agent=CFG["UA"],
@@ -1079,7 +1099,10 @@ with open(ctx.log_file, encoding="utf-8") as f:
 all_errors = error_lines
 error_msg = "\n".join(all_errors).strip()
 
-result = {"phone": user_phone}
+proxy_used = proxy_cfg is not None
+log(f"[INFO] proxy_used: {proxy_used}", ctx)
+
+result = {"phone": user_phone, "proxy_used": proxy_used}
 
 
 if error_msg:

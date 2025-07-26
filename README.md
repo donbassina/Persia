@@ -38,6 +38,20 @@ EOF
 cat params.json | python Samokat-TP.py --proxy=http://1.2.3.4:8080
 ```
 
+Через JSON:
+
+```bash
+cat <<EOF | python Samokat-TP.py
+{
+  "user_phone": "79991234567",
+  "proxy": "http://1.2.3.4:8080"
+}
+EOF
+```
+
+При неверном формате прокси задача завершается с ошибкой `bad_proxy_format`.
+Если прокси недоступен, скрипт продолжит работу без него.
+
 params.json – тот же JSON, который n8n отправляет в stdin (хз че эт). При отсутствии поля
 `headless` используется значение по умолчанию из `config_defaults.json`.
 

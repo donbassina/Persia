@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from random import SystemRandom
 
+import logging
 import requests
 
 from python_ghost_cursor.playwright_async import create_cursor
@@ -27,7 +28,8 @@ except ImportError:  # более старые версии
 # ------------------------------------------------------------------------------
 
 from samokat_config import CFG, load_cfg
-from utils import RunContext, log, make_log_file, version_check, load_selectors
+from utils import RunContext, make_log_file, version_check, load_selectors
+from logger_setup import get_logger
 from proxy_utils import parse_proxy, probe_proxy, ProxyError
 
 
@@ -37,6 +39,8 @@ _REQUIRED = {
 }
 
 version_check(_REQUIRED)
+
+logger = get_logger("samokat.main")
 
 
 _rnd = SystemRandom()  # единый генератор на весь скрипт
@@ -65,14 +69,19 @@ def send_webhook(result, webhook_url, ctx: RunContext):
                 raise Exception(f"Status {resp.status_code}")
             except Exception as exc:
                 e = exc
-                log(f"[WARN] webhook fail, retry {attempt + 1} in 60s: {e}", ctx)
+                logger.warning(
+                    "webhook fail, retry %s in 60s: %s",
+                    attempt + 1,
+                    e,
+                )
                 time.sleep(60)
-        log(f"[FATAL] webhook 3rd fail: {e}", ctx)
+        logger.error("webhook 3rd fail: %s", e)
 
 
 try:
     params = json.load(sys.stdin)
     json_headless_raw = params.get("headless")
+    headless_error = False
     if json_headless_raw is not None:
         try:
             ctx_json_headless = _to_bool(json_headless_raw)
@@ -90,8 +99,8 @@ try:
             }:
                 raise ValueError
         except ValueError:
-            print('{"error":"bad headless value"}')
-            sys.exit(1)
+            headless_error = True
+            ctx_json_headless = None
     else:
         ctx_json_headless = None
     user_phone = params.get("user_phone", "")
@@ -120,10 +129,18 @@ try:
         log_start_pos=log_start,
         json_headless=ctx_json_headless,
     )
-    log(f"[INFO] Получены параметры: {params}", ctx)
+    file_handler = logging.FileHandler(ctx.log_file, encoding="utf-8")
+    file_handler.setFormatter(
+        logging.Formatter(
+            "[%(asctime)s] %(levelname)s %(name)s – %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
+    logger.addHandler(file_handler)
+    logger.info("Получены параметры: %s", params)
     load_cfg(base_dir=Path(__file__).parent, cli_overrides=overrides, ctx=ctx)
     if proxy_url:
-        log(f"[INFO] Proxy enabled: {proxy_url}", ctx)
+        logger.info("Proxy enabled: %s", proxy_url)
     if proxy_url:
         try:
             parsed = parse_proxy(proxy_url)
@@ -135,16 +152,16 @@ try:
             if parsed.get("password"):
                 proxy_cfg["password"] = parsed["password"]
         except ProxyError:
-            log("[ERROR] bad_proxy_format", ctx)
+            logger.error("bad_proxy_format")
             fatal = {"phone": user_phone, "error": "bad_proxy_format"}
             send_webhook(fatal, webhook_url, ctx)
             print(json.dumps(fatal, ensure_ascii=False))
             sys.exit(1)
         if not probe_proxy(parsed):
-            log("[WARN] proxy_unavailable – continue without proxy", ctx)
+            logger.warning("proxy_unavailable – continue without proxy")
             proxy_cfg = None
     if ctx.json_headless is not None:
-        log(f"[INFO] headless overridden by JSON → {ctx.json_headless}", ctx)
+        logger.info("headless overridden by JSON → %s", ctx.json_headless)
 except Exception as e:
     print(f"[ERROR] Не удалось получить JSON из stdin: {e}")
     sys.exit(1)
@@ -197,10 +214,12 @@ async def should_abort(route, ctx: RunContext):
         return
 
     if not ctx.first_abort_logged:
-        log(
-            f"[INFO] ABORT {req.method} {req.url} "
-            f"({r_type}, len≈{headers.get('content-length','?')})",
-            ctx,
+        logger.info(
+            "ABORT %s %s (%s, len≈%s)",
+            req.method,
+            req.url,
+            r_type,
+            headers.get("content-length", "?"),
         )
         ctx.first_abort_logged = True
 
@@ -257,13 +276,13 @@ FP_LANGUAGES = ["ru-RU", "ru"]
 FP_ACCEPT_LANGUAGE = "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
 FP_WEBGL_VENDOR = "Intel Inc."
 FP_WEBGL_RENDERER = "Intel Iris OpenGL Engine"
-log(f"[INFO] Platform: {FP_PLATFORM}", ctx)
-log(f"[INFO] Device Memory: {FP_DEVICE_MEMORY}", ctx)
-log(f"[INFO] Hardware Concurrency: {FP_HARDWARE_CONCURRENCY}", ctx)
-log(f"[INFO] Languages: {FP_ACCEPT_LANGUAGE}", ctx)
-log(f"[INFO] Timezone: {tz}", ctx)
-log(f"[INFO] WebGL Vendor: {FP_WEBGL_VENDOR}", ctx)
-log(f"[INFO] WebGL Renderer: {FP_WEBGL_RENDERER}", ctx)
+logger.info("Platform: %s", FP_PLATFORM)
+logger.info("Device Memory: %s", FP_DEVICE_MEMORY)
+logger.info("Hardware Concurrency: %s", FP_HARDWARE_CONCURRENCY)
+logger.info("Languages: %s", FP_ACCEPT_LANGUAGE)
+logger.info("Timezone: %s", tz)
+logger.info("WebGL Vendor: %s", FP_WEBGL_VENDOR)
+logger.info("WebGL Renderer: %s", FP_WEBGL_RENDERER)
 
 
 # ====================================================================================
@@ -297,7 +316,7 @@ async def human_type(page, selector: str, text: str, ctx: RunContext):
         await asyncio.sleep(delay)
         total += delay
 
-    log(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}', ctx)
+    logger.info(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}')
 
 
 async def fill_full_name(page, name, ctx: RunContext, retries=3):
@@ -314,8 +333,8 @@ async def fill_full_name(page, name, ctx: RunContext, retries=3):
                 return True
             await page.wait_for_timeout(200)
         except Exception as e:
-            log(f"[WARN] fill_full_name attempt {attempt+1} failed: {e}", ctx)
-    log("[ERROR] Не удалось заполнить поле ФИО", ctx)
+            logger.warning("fill_full_name attempt %s failed: %s", attempt + 1, e)
+    logger.error("Не удалось заполнить поле ФИО")
     return False
 
 
@@ -355,8 +374,8 @@ async def fill_city(page, city, ctx: RunContext, retries=3):
                 return True
             await page.wait_for_timeout(200)
         except Exception as e:
-            log(f"[WARN] fill_city attempt {attempt+1} failed: {e}", ctx)
-    log("[ERROR] Не удалось выбрать город", ctx)
+            logger.warning("fill_city attempt %s failed: %s", attempt + 1, e)
+    logger.error("Не удалось выбрать город")
     return False
 
 
@@ -374,8 +393,8 @@ async def fill_phone(page, phone, ctx: RunContext, retries=3):
                 return True
             await page.wait_for_timeout(200)
         except Exception as e:
-            log(f"[WARN] fill_phone attempt {attempt+1} failed: {e}", ctx)
-    log("[ERROR] Не удалось заполнить поле Телефон", ctx)
+            logger.warning("fill_phone attempt %s failed: %s", attempt + 1, e)
+    logger.error("Не удалось заполнить поле Телефон")
     return False
 
 
@@ -400,8 +419,8 @@ async def fill_gender(page, gender, ctx: RunContext, retries=3):
                 return True
             await page.wait_for_timeout(200)
         except Exception as e:
-            log(f"[WARN] fill_gender attempt {attempt+1} failed: {e}", ctx)
-    log("[ERROR] Не удалось выбрать пол", ctx)
+            logger.warning("fill_gender attempt %s failed: %s", attempt + 1, e)
+    logger.error("Не удалось выбрать пол")
     return False
 
 
@@ -419,8 +438,8 @@ async def fill_age(page, age, ctx: RunContext, retries=3):
                 return True
             await page.wait_for_timeout(200)
         except Exception as e:
-            log(f"[WARN] fill_age attempt {attempt+1} failed: {e}", ctx)
-    log("[ERROR] Не удалось заполнить поле Возраст", ctx)
+            logger.warning("fill_age attempt %s failed: %s", attempt + 1, e)
+    logger.error("Не удалось заполнить поле Возраст")
     return False
 
 
@@ -445,8 +464,12 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
                 return True
             await page.wait_for_timeout(200)
         except Exception as e:
-            log(f"[WARN] fill_courier_type attempt {attempt+1} failed: {e}", ctx)
-    log("[ERROR] Не удалось выбрать тип курьера", ctx)
+            logger.warning(
+                "fill_courier_type attempt %s failed: %s",
+                attempt + 1,
+                e,
+            )
+    logger.error("Не удалось выбрать тип курьера")
     return False
 
 
@@ -464,8 +487,12 @@ async def fill_policy_checkbox(page, ctx: RunContext, retries=3):
                     return True
             await page.wait_for_timeout(200)
         except Exception as e:
-            log(f"[WARN] fill_policy_checkbox attempt {attempt+1} failed: {e}", ctx)
-    log("[ERROR] Не удалось поставить галочку политики", ctx)
+            logger.warning(
+                "fill_policy_checkbox attempt %s failed: %s",
+                attempt + 1,
+                e,
+            )
+    logger.error("Не удалось поставить галочку политики")
     return False
 
 
@@ -490,7 +517,7 @@ async def human_type_city_autocomplete(page, selector: str, text: str, ctx: RunC
         await asyncio.sleep(delay)
         total += delay
 
-    log(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}', ctx)
+    logger.info(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}')
 
 
 async def human_move_cursor(page, el, ctx: RunContext):
@@ -526,7 +553,7 @@ async def human_move_cursor(page, el, ctx: RunContext):
         or await el.evaluate("el => el.className")
         or "element"
     )
-    log(f"[INFO] Курсор к {sel} ({int(target_x)},{int(target_y)})", ctx)
+    logger.info(f"[INFO] Курсор к {sel} ({int(target_x)},{int(target_y)})", ctx)
 
 
 async def emulate_user_reading(page, total_time, ctx: RunContext):
@@ -556,17 +583,17 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                     await asyncio.sleep(_rnd.uniform(0.06, 0.12))
             else:
                 await page.mouse.wheel(0, step)
-            log(f"[INFO] wheel вниз на {step}", ctx)
+            logger.info(f"[INFO] wheel вниз на {step}")
             await asyncio.sleep(_rnd.uniform(0.7, 1.7))
         elif action == "scroll_up":
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
             current_y = max(current_y - step, 0)
             await page.mouse.wheel(0, -step)
-            log(f"[INFO] wheel вверх на {step}", ctx)
+            logger.info(f"[INFO] wheel вверх на {step}")
             await asyncio.sleep(_rnd.uniform(0.5, 1.1))
         elif action == "pause":
             t = _rnd.uniform(1.2, 3.8)
-            log(f"[INFO] Пауза {t:.1f}", ctx)
+            logger.info(f"[INFO] Пауза {t:.1f}")
             await asyncio.sleep(t)
         elif action == "mouse_wiggle":
             x = _rnd.randint(100, 1200)
@@ -576,7 +603,7 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             await page.mouse.move(x, y, steps=_rnd.randint(4, 10))
             await asyncio.sleep(_rnd.uniform(0.08, 0.18))
             await page.mouse.move(x + dx, y + dy, steps=2)
-            log(f"[INFO] Мышь дрожит ({x},{y})", ctx)
+            logger.info(f"[INFO] Мышь дрожит ({x},{y})", ctx)
             await asyncio.sleep(_rnd.uniform(0.10, 0.22))
         else:
             sel = _rnd.choice(blocks)
@@ -587,7 +614,7 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                     x = box["x"] + _rnd.uniform(12, box["width"] - 12)
                     y = box["y"] + _rnd.uniform(12, box["height"] - 12)
                     await page.mouse.move(x, y, steps=_rnd.randint(10, 22))
-                    log(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})", ctx)
+                    logger.info(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})", ctx)
                     await asyncio.sleep(_rnd.uniform(0.4, 1.3))
 
 
@@ -604,13 +631,13 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
 async def smooth_scroll_to_form(page, ctx: RunContext):
     form = await page.query_selector("div.form-wrapper")
     if not form:
-        log("[WARN] div.form-wrapper не найден", ctx)
+        logger.warning("div.form-wrapper не найден")
         return
 
     while True:
         b = await form.bounding_box()
         if not b:
-            log("[WARN] Не удалось получить bounding_box формы", ctx)
+            logger.warning("Не удалось получить bounding_box формы")
             return
 
         form_top = b["y"]
@@ -618,9 +645,10 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         scroll_y = await page.evaluate("window.scrollY")
 
         if 0 <= form_top < viewport_height // 4:
-            log(
-                f"[SCROLL] Форма видна: form_top={form_top}, viewport_height={viewport_height}",
-                ctx,
+            logger.info(
+                "[SCROLL] Форма видна: form_top=%s, viewport_height=%s",
+                form_top,
+                viewport_height,
             )
             break
 
@@ -643,7 +671,7 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
                 await asyncio.sleep(_rnd.uniform(0.06, 0.12))
         else:
             await page.mouse.wheel(0, direction * step)
-        log(f"[SCROLL] wheel {'down' if direction>0 else 'up'} {step}", ctx)
+        logger.info(f"[SCROLL] wheel {'down' if direction>0 else 'up'} {step}")
 
         # Остановки возле блоков с текстом
         text_blocks = [".hero", ".about", ".benefits", ".form-wrapper"]
@@ -653,7 +681,7 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
                 b2 = await el.bounding_box()
                 if b2 and abs(b2["y"] - new_y) < 60:
                     pause_t = _rnd.uniform(1.2, 3.2)
-                    log(f"[INFO] Пауза у блока {sel} {pause_t:.1f} сек", ctx)
+                    logger.info(f"[INFO] Пауза у блока {sel} {pause_t:.1f} сек")
                     await asyncio.sleep(pause_t)
                     break
 
@@ -684,9 +712,12 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
                 await asyncio.sleep(_rnd.uniform(0.06, 0.12))
         else:
             await page.mouse.wheel(0, delta)
-        log(
-            f"[SCROLL] wheel small: scroll_y={scroll_y} → {new_y}, form_top={form_top}, step={step}",
-            ctx,
+        logger.info(
+            "[SCROLL] wheel small: scroll_y=%s → %s, form_top=%s, step=%s",
+            scroll_y,
+            new_y,
+            form_top,
+            step,
         )
         await asyncio.sleep(0.06)
 
@@ -753,7 +784,7 @@ if (window.WebGL2RenderingContext) {{
 }}
 """
         )
-        log("[INFO] Patched WebGL2 getParameter", ctx)
+        logger.info("[INFO] Patched WebGL2 getParameter")
         page = await context.new_page()
         cursor = create_cursor(page)
 
@@ -772,10 +803,10 @@ if (window.WebGL2RenderingContext) {{
                     wait_until="domcontentloaded",
                     timeout=CFG["PAGE_GOTO_TIMEOUT"],
                 )
-                log("[INFO] Страница загружена", ctx)
+                logger.info("[INFO] Страница загружена")
             except PWTimeoutError:
                 error_msg = f"Timeout {CFG['PAGE_GOTO_TIMEOUT'] // 1000} сек. при загрузке лендинга"
-                log(f"[ERROR] {error_msg}", ctx)
+                logger.error(f" {error_msg}")
                 raise
             except PlaywrightError as e:
                 if "has been closed" in str(e) or "TargetClosedError" in str(e):
@@ -791,16 +822,18 @@ if (window.WebGL2RenderingContext) {{
                 or "Service Unavailable" in status
             ):
                 error_msg = "Ошибка 503: сайт временно недоступен"
-                log(f"[ERROR] {error_msg}", ctx)
+                logger.error(f" {error_msg}")
                 raise Exception(error_msg)
 
             try:
                 await page.wait_for_selector(
                     "div.form-wrapper", timeout=CFG["FORM_WRAPPER_TIMEOUT"]
                 )
-                log("[INFO] Контент формы загружен (div.form-wrapper найден)", ctx)
+                logger.info(
+                    "[INFO] Контент формы загружен (div.form-wrapper найден)", ctx
+                )
             except Exception as e:
-                log(f"[WARN] div.form-wrapper не найден: {e}", ctx)
+                logger.warning(f" div.form-wrapper не найден: {e}")
 
             # измеряем фактическое время полной загрузки
             load_ms = await page.evaluate(
@@ -812,7 +845,7 @@ if (window.WebGL2RenderingContext) {{
             base_read = _rnd.uniform(10, 25)
             total_time = max(min_read, base_read - max(0, 7 - load_sec))
 
-            log(f"[INFO] Имитация “чтения” лендинга: {total_time:.1f} сек", ctx)
+            logger.info(f"[INFO] Имитация “чтения” лендинга: {total_time:.1f} сек")
 
             await emulate_user_reading(page, total_time, ctx)
 
@@ -825,40 +858,39 @@ if (window.WebGL2RenderingContext) {{
             # Этап 4. Клик мышью по каждому полю, заполнение всех полей, установка галочки
             # ====================================================================================
             try:
-                log("[INFO] Вводим ФИО через fill_full_name", ctx)
+                logger.info("[INFO] Вводим ФИО через fill_full_name")
                 await fill_full_name(page, user_name, ctx)
 
-                log("[INFO] Вводим город через fill_city", ctx)
+                logger.info("[INFO] Вводим город через fill_city")
                 await fill_city(page, user_city, ctx)
                 await asyncio.sleep(0.3)
 
-                log("[INFO] Вводим телефон через fill_phone", ctx)
+                logger.info("[INFO] Вводим телефон через fill_phone")
                 await fill_phone(page, phone_for_form, ctx)
                 await asyncio.sleep(0.1)
 
-                log("[INFO] Вводим пол через fill_gender", ctx)
+                logger.info("[INFO] Вводим пол через fill_gender")
                 await fill_gender(page, user_gender, ctx)
                 await asyncio.sleep(0.1)
 
-                log("[INFO] Вводим возраст через fill_age", ctx)
+                logger.info("[INFO] Вводим возраст через fill_age")
                 await fill_age(page, user_age, ctx)
                 await asyncio.sleep(0.1)
 
-                log("[INFO] Вводим тип курьера через fill_courier_type", ctx)
+                logger.info("[INFO] Вводим тип курьера через fill_courier_type")
                 await fill_courier_type(page, user_courier_type, ctx)
                 await asyncio.sleep(0.1)
 
-                log("[INFO] Ставим галочку политики через fill_policy_checkbox", ctx)
+                logger.info("[INFO] Ставим галочку политики через fill_policy_checkbox")
                 await fill_policy_checkbox(page, ctx)
                 await asyncio.sleep(0.1)
 
-                log(
-                    "[INFO] Все поля формы заполнены и чекбокс отмечен. Ожидание завершено.",
-                    ctx,
+                logger.info(
+                    "[INFO] Все поля формы заполнены и чекбокс отмечен. Ожидание завершено."
                 )
 
             except Exception as e:
-                log(f"[ERROR] Ошибка на этапе заполнения формы: {e}", ctx)
+                logger.error(f" Ошибка на этапе заполнения формы: {e}")
 
             # ====================================================================================
             # Этап 5. Скриншот формы после заполнения и проверка заполненности
@@ -877,7 +909,7 @@ if (window.WebGL2RenderingContext) {{
                 idx += 1
             await page.screenshot(path=path, full_page=False)
             ctx.screenshot_path = path
-            log(f"[INFO] Скриншот формы сохранён: {ctx.screenshot_path}", ctx)
+            logger.info(f"[INFO] Скриншот формы сохранён: {ctx.screenshot_path}")
 
             await asyncio.sleep(1.5)
 
@@ -922,12 +954,15 @@ if (window.WebGL2RenderingContext) {{
 
                 empty_fields = [k for k, v in required_fields.items() if not v.strip()]
                 if empty_fields:
-                    log(f"[ERROR] Не заполнены поля: {', '.join(empty_fields)}", ctx)
+                    logger.error(
+                        "Не заполнены поля: %s",
+                        ", ".join(empty_fields),
+                    )
                     error_msg = f"Не заполнены поля: {', '.join(empty_fields)}"
                 else:
                     error_msg = ""
             except Exception as e:
-                log(f"[ERROR] Ошибка при проверке/скриншоте: {e}", ctx)
+                logger.error(f" Ошибка при проверке/скриншоте: {e}")
                 error_msg = str(e)
 
             if error_msg:
@@ -952,11 +987,11 @@ if (window.WebGL2RenderingContext) {{
                     old_url = page.url
                     try:
                         await cursor.click(button_selector)
-                        log("[INFO] Кнопка 'Оставить заявку' успешно нажата", ctx)
+                        logger.info("[INFO] Кнопка 'Оставить заявку' успешно нажата")
                     except Exception as e:
-                        log(
-                            f"[ERROR] Не удалось кликнуть по кнопке 'Оставить заявку': {e}",
-                            ctx,
+                        logger.error(
+                            "Не удалось кликнуть по кнопке 'Оставить заявку': %s",
+                            e,
                         )
                         raise
 
@@ -966,7 +1001,7 @@ if (window.WebGL2RenderingContext) {{
                             f'document.location.href !== "{old_url}"',
                             timeout=CFG["REDIRECT_TIMEOUT"],
                         )
-                        log("[INFO] URL изменился — заявка успешно отправлена", ctx)
+                        logger.info("[INFO] URL изменился — заявка успешно отправлена")
 
                         modal_selector = selectors["form"]["thank_you"]
                         modal = await page.query_selector(modal_selector)
@@ -977,41 +1012,42 @@ if (window.WebGL2RenderingContext) {{
                                     modal_selector,
                                     timeout=CFG["MODAL_SELECTOR_TIMEOUT"],
                                 )
-                                log(
-                                    "[INFO] Всплывающее окно подтверждения появилось после ожидания",
-                                    ctx,
+                                logger.info(
+                                    "[INFO] Всплывающее окно подтверждения появилось после ожидания"
                                 )
                             except PWTimeoutError:
-                                log("selector_not_found:thank_you", ctx)
+                                logger.info("selector_not_found:thank_you")
                                 html_content = await page.content()
-                                log(
-                                    "[ERROR] Всплывающее окно подтверждения НЕ появилось после ожидания: Timeout",
-                                    ctx,
+                                logger.error(
+                                    "Всплывающее окно подтверждения НЕ появилось после ожидания: Timeout"
                                 )
-                                log(f"[DEBUG HTML CONTENT]: {html_content[:2000]}", ctx)
+                                logger.info(
+                                    f"[DEBUG HTML CONTENT]: {html_content[:2000]}"
+                                )
                                 raise
                             except Exception as e:
                                 html_content = await page.content()
-                                log(
-                                    f"[ERROR] Всплывающее окно подтверждения НЕ появилось после ожидания: {e}",
-                                    ctx,
+                                logger.error(
+                                    "Всплывающее окно подтверждения НЕ появилось после ожидания: %s",
+                                    e,
                                 )
-                                log(f"[DEBUG HTML CONTENT]: {html_content[:2000]}", ctx)
+                                logger.info(
+                                    f"[DEBUG HTML CONTENT]: {html_content[:2000]}"
+                                )
                                 raise
                         else:
-                            log(
-                                "[INFO] Всплывающее окно подтверждения уже было на экране",
-                                ctx,
+                            logger.info(
+                                "[INFO] Всплывающее окно подтверждения уже было на экране"
                             )
 
-                        log("[INFO] Всплывающее окно подтверждения появилось", ctx)
+                        logger.info("[INFO] Всплывающее окно подтверждения появилось")
                         await asyncio.sleep(_rnd.uniform(1, 4))
                         # ====== Этап 7: извлечение utm_term из финального URL ======
                         try:
                             final_url = page.url
-                            log(
-                                f"[DEBUG] Финальный URL для поиска utm_term: {final_url}",
-                                ctx,
+                            logger.info(
+                                "[DEBUG] Финальный URL для поиска utm_term: %s",
+                                final_url,
                             )
                             ctx.postback = None
                             if "utm_term=" in final_url:
@@ -1021,27 +1057,25 @@ if (window.WebGL2RenderingContext) {{
                                     ctx.postback = final_url[start:]
                                 else:
                                     ctx.postback = final_url[start:end]
-                                log(f"[INFO] POSTBACK: {ctx.postback}", ctx)
+                                logger.info("POSTBACK: %s", ctx.postback)
                             else:
-                                log("[ERROR] utm_term не найден в ссылке", ctx)
+                                logger.error("utm_term не найден в ссылке")
                                 raise Exception("utm_term not found in final URL")
                         except Exception as e:
-                            log(
-                                f"[ERROR] Ошибка на этапе извлечения utm_term: {e}", ctx
-                            )
+                            logger.error("Ошибка на этапе извлечения utm_term: %s", e)
                     except Exception as e:
                         if page.url == old_url:
-                            log("[ERROR] Редирект после клика не произошел", ctx)
+                            logger.error("Редирект после клика не произошел")
                             raise Exception("Редирект после клика не произошел")
                         else:
-                            log(
-                                f"[ERROR] Всплывающее окно подтверждения НЕ появилось: {e}",
-                                ctx,
+                            logger.error(
+                                "Всплывающее окно подтверждения НЕ появилось: %s",
+                                e,
                             )
                 except Exception as e:
-                    log(
-                        f"[ERROR] Ошибка при клике по кнопке 'Оставить заявку': {e}",
-                        ctx,
+                    logger.error(
+                        "Ошибка при клике по кнопке 'Оставить заявку': %s",
+                        e,
                     )
 
         finally:
@@ -1059,7 +1093,7 @@ async def main(ctx: RunContext):
         raise RuntimeError(f"selectors profile '{profile}' not found")
 
     path = Path("selectors") / f"{profile}.yml"
-    log(f"[INFO] selectors profile: {profile} file: {path.resolve()}", ctx)
+    logger.info("selectors profile: %s file: %s", profile, path.resolve())
 
     await asyncio.wait_for(run_browser(ctx), timeout=CFG["RUN_TIMEOUT"])
 
@@ -1069,19 +1103,19 @@ if __name__ == "__main__":
         asyncio.run(main(ctx))
     except RuntimeError as e:
         if str(e).startswith("selectors profile"):
-            log(f"[FATAL] {e}", ctx)
+            logger.info(f"[FATAL] {e}")
             fatal = {"phone": user_phone, "error": "selectors_profile_not_found"}
             if not ctx.browser_closed_manually:
                 send_webhook(fatal, webhook_url, ctx)
             print(json.dumps(fatal, ensure_ascii=False))
             sys.exit(1)
         else:
-            log(f"[FATAL] {e}", ctx)
+            logger.info(f"[FATAL] {e}")
             fatal = {"error": f"UNCAUGHT {e.__class__.__name__}: {e}"}
             print(json.dumps(fatal, ensure_ascii=False))
             sys.exit(1)
     except Exception as e:  # любая непойманная ошибка
-        log(f"[FATAL] {e}", ctx)
+        logger.info(f"[FATAL] {e}")
         fatal = {"error": f"UNCAUGHT {e.__class__.__name__}: {e}"}
         print(json.dumps(fatal, ensure_ascii=False))
         sys.exit(1)
@@ -1100,17 +1134,26 @@ all_errors = error_lines
 error_msg = "\n".join(all_errors).strip()
 
 proxy_used = proxy_cfg is not None
-log(f"[INFO] proxy_used: {proxy_used}", ctx)
+logger.info("proxy_used: %s", proxy_used)
 
 result = {"phone": user_phone, "proxy_used": proxy_used}
 
 
 if error_msg:
     result["error"] = error_msg
-    if ctx.screenshot_path:
-        result["screenshot"] = ctx.screenshot_path
 else:
     result["POSTBACK"] = ctx.postback
+
+if headless_error:
+    result["error"] = "bad headless value"
+
+if ctx.screenshot_path:
+    result["screenshot"] = os.path.abspath(ctx.screenshot_path)
+
+result["log"] = os.path.abspath(ctx.log_file)
+
+result_state = "SUCCESS" if "error" not in result else "ERROR"
+logger.info("RESULT: %s", result_state)
 
 
 if not ctx.browser_closed_manually:

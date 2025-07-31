@@ -358,7 +358,7 @@ async def human_type(page, selector: str, text: str, ctx: RunContext):
 async def fill_full_name(page, name, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            input_box = page.get_by_placeholder("ФИО")
+            input_box = page.locator(selectors["form"]["name"])
             await human_move_cursor(page, input_box, ctx)
             await input_box.click()
             await page.wait_for_timeout(100)
@@ -375,40 +375,14 @@ async def fill_full_name(page, name, ctx: RunContext, retries=3):
 
 
 async def fill_city(page, city, ctx: RunContext, retries=3):
-    city_lower = city.strip().lower()
     for attempt in range(retries):
         try:
-            input_box = page.get_by_placeholder("Выберите город").nth(0)
+            input_box = page.locator(selectors["form"]["city"])
             await human_move_cursor(page, input_box, ctx)
             await input_box.click()
-            await page.wait_for_timeout(100)
-            await input_box.fill("")
-            part_city = get_partial_city(city)
-            await human_type_city_autocomplete(
-                page, 'input[name="user_city"]', part_city, ctx
-            )
-
-            try:
-                await page.wait_for_selector(
-                    ".form-list-item", timeout=CFG["SELECT_ITEM_TIMEOUT"]
-                )
-            except PWTimeoutError:
-                pass
-
-            try:
-                items = await page.query_selector_all(".form-list-item")
-                for it in items:
-                    txt = (await it.inner_text()).strip().lower()
-                    if txt == city_lower:
-                        await it.click()
-                        break
-            except Exception:
-                pass
-
-            value = await input_box.input_value()
-            if value.strip().lower() == city_lower:
-                return True
-            await page.wait_for_timeout(200)
+            item_sel = selectors["form"]["city_item"]
+            await page.locator(item_sel).get_by_text(city, exact=True).click()
+            return True
         except Exception as e:
             logger.warning("fill_city attempt %s failed: %s", attempt + 1, e)
     logger.error("Не удалось выбрать город")
@@ -418,7 +392,7 @@ async def fill_city(page, city, ctx: RunContext, retries=3):
 async def fill_phone(page, phone, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            input_box = page.get_by_placeholder("+7 (900) 000 00-00")
+            input_box = page.locator(selectors["form"]["phone"])
             await human_move_cursor(page, input_box, ctx)
             await input_box.click()
             await page.wait_for_timeout(100)
@@ -437,23 +411,12 @@ async def fill_phone(page, phone, ctx: RunContext, retries=3):
 async def fill_gender(page, gender, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            input_box = page.get_by_placeholder("Выберите пол")
+            input_box = page.locator(selectors["form"]["gender"])
             await human_move_cursor(page, input_box, ctx)
             await input_box.click()
-            await page.wait_for_timeout(100)
-            try:
-                await page.get_by_text(gender, exact=True).click(
-                    timeout=CFG["SELECT_ITEM_TIMEOUT"]
-                )
-            except Exception:
-                value = await input_box.input_value()
-                if value.strip().lower() == gender.strip().lower():
-                    return True
-                continue
-            value = await input_box.input_value()
-            if value.strip().lower() == gender.strip().lower():
-                return True
-            await page.wait_for_timeout(200)
+            item_sel = selectors["form"]["gender_item"]
+            await page.locator(item_sel).get_by_text(gender, exact=True).click()
+            return True
         except Exception as e:
             logger.warning("fill_gender attempt %s failed: %s", attempt + 1, e)
     logger.error("Не удалось выбрать пол")
@@ -463,12 +426,12 @@ async def fill_gender(page, gender, ctx: RunContext, retries=3):
 async def fill_age(page, age, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            input_box = page.get_by_placeholder("0").nth(1)
+            input_box = page.locator(selectors["form"]["age"])
             await human_move_cursor(page, input_box, ctx)
             await input_box.click()
             await page.wait_for_timeout(100)
             await input_box.fill("")
-            await human_type(page, 'input[name="user_age"]', age, ctx)
+            await human_type(page, selectors["form"]["age"], age, ctx)
             value = await input_box.input_value()
             if value.strip() == age.strip():
                 return True
@@ -482,23 +445,14 @@ async def fill_age(page, age, ctx: RunContext, retries=3):
 async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            input_box = page.get_by_placeholder("Выберите тип")
+            input_box = page.locator(selectors["form"]["courier"])
             await human_move_cursor(page, input_box, ctx)
             await input_box.click()
-            await page.wait_for_timeout(100)
-            try:
-                await page.get_by_text(courier_type, exact=True).click(
-                    timeout=CFG["SELECT_ITEM_TIMEOUT"]
-                )
-            except Exception:
-                value = await input_box.input_value()
-                if value.strip().lower() == courier_type.strip().lower():
-                    return True
-                continue
-            value = await input_box.input_value()
-            if value.strip().lower() == courier_type.strip().lower():
-                return True
-            await page.wait_for_timeout(200)
+            item_sel = selectors["form"]["courier_item"]
+            await page.locator(item_sel).get_by_text(
+                courier_type, exact=True
+            ).click()
+            return True
         except Exception as e:
             logger.warning(
                 "fill_courier_type attempt %s failed: %s",
@@ -512,16 +466,8 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
 async def fill_policy_checkbox(page, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            checkbox = await page.query_selector(selectors["form"]["checkbox"])
-            if checkbox:
-                await checkbox.click()
-                # Проверка: SVG-галочка появляется в DOM после клика
-                checked = await page.query_selector(
-                    selectors["form"]["checkbox"] + " svg"
-                )
-                if checked:
-                    return True
-            await page.wait_for_timeout(200)
+            await page.locator(selectors["form"]["policy"]).click()
+            return True
         except Exception as e:
             logger.warning(
                 "fill_policy_checkbox attempt %s failed: %s",
@@ -530,6 +476,20 @@ async def fill_policy_checkbox(page, ctx: RunContext, retries=3):
             )
     logger.error("Не удалось поставить галочку политики")
     return False
+
+
+async def submit_form(page, ctx: RunContext):
+    """Click submit button or submit form if the button is hidden."""
+    btn = page.locator(selectors["form"]["submit"])
+    try:
+        display = await btn.evaluate("el => getComputedStyle(el).display")
+        if display == "none":
+            await page.locator("form").evaluate("f => f.submit()")
+        else:
+            await btn.click()
+    except Exception as e:
+        logger.error("submit_form failed: %s", e)
+        raise
 
 
 def get_partial_city(city_name):
@@ -1027,7 +987,7 @@ if (window.WebGL2RenderingContext) {{
                     button_selector = selectors["form"]["submit"]
                     old_url = page.url
                     try:
-                        await cursor.click(button_selector)
+                        await submit_form(page, ctx)
                         logger.info("[INFO] Кнопка 'Оставить заявку' успешно нажата")
                     except Exception as e:
                         logger.error(

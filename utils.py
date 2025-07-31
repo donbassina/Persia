@@ -34,6 +34,7 @@ class RunContext:
     browser_closed_manually: bool = False
     first_abort_logged: bool = False
     errors: list[str] = field(default_factory=list)
+    mouse_pos: tuple[float, float] = (0.0, 0.0)
 
     def clone(self) -> "RunContext":
         """Return a deep copy of this context."""

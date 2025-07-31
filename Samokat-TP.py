@@ -45,6 +45,9 @@ logger = get_logger("samokat.main")
 
 _rnd = SystemRandom()  # единый генератор на весь скрипт
 
+# global ghost-cursor instance, created in run_browser
+GCURSOR = None
+
 # selectors loaded from YAML profile in ``main``
 # default profile path: selectors/default.yml
 selectors: dict | None = None
@@ -361,7 +364,8 @@ async def fill_full_name(page, name, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["name"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
+            await page.wait_for_timeout(50)
             await page.wait_for_timeout(100)
             await input_box.fill("")
             await human_type(page, selectors["form"]["name"], name, ctx)
@@ -380,7 +384,7 @@ async def fill_city(page, city, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["city"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
             item_sel = selectors["form"]["city_item"]
             await page.locator(item_sel).get_by_text(city, exact=True).click()
             return True
@@ -395,7 +399,8 @@ async def fill_phone(page, phone, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["phone"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
+            await page.wait_for_timeout(50)
             await page.wait_for_timeout(100)
             await input_box.fill("")
             await human_type(page, selectors["form"]["phone"], phone, ctx)
@@ -414,7 +419,7 @@ async def fill_gender(page, gender, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["gender"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
             item_sel = selectors["form"]["gender_item"]
             await page.locator(item_sel).get_by_text(gender, exact=True).click()
             return True
@@ -429,7 +434,8 @@ async def fill_age(page, age, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["age"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
+            await page.wait_for_timeout(50)
             await page.wait_for_timeout(100)
             await input_box.fill("")
             await human_type(page, selectors["form"]["age"], age, ctx)
@@ -448,7 +454,7 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["courier"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
             item_sel = selectors["form"]["courier_item"]
             await page.locator(item_sel).get_by_text(courier_type, exact=True).click()
             return True
@@ -465,7 +471,7 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
 async def fill_policy_checkbox(page, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            await page.locator(selectors["form"]["policy"]).click()
+            await ghost_click(page.locator(selectors["form"]["policy"]))
             return True
         except Exception as e:
             logger.warning(
@@ -485,7 +491,7 @@ async def submit_form(page, ctx: RunContext):
         if display == "none":
             await page.locator("form").evaluate("f => f.submit()")
         else:
-            await btn.click()
+            await ghost_click(btn)
     except Exception as e:
         logger.error("submit_form failed: %s", e)
         raise
@@ -515,6 +521,48 @@ async def human_type_city_autocomplete(page, selector: str, text: str, ctx: RunC
     logger.info(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}')
 
 
+async def ghost_click(selector_or_element):
+    """Click element using global ghost cursor and log movement."""
+    if GCURSOR is None:
+        return
+    page = GCURSOR.page
+    if isinstance(selector_or_element, str):
+        el = await page.query_selector(selector_or_element)
+        box = await el.bounding_box() if el else None
+        await GCURSOR.click(selector_or_element)
+        if box:
+            name = (
+                await el.get_attribute("name")
+                or await el.get_attribute("placeholder")
+                or await el.evaluate("el => el.className")
+                or selector_or_element
+            )
+            logger.info(
+                f"[INFO] Курсор к {name} ({int(box['x']+box['width']/2)},{int(box['y']+box['height']/2)})"
+            )
+        return
+
+    el = selector_or_element
+    box = await el.bounding_box()
+    if not box:
+        return
+    x = box["x"] + box["width"] / 2
+    y = box["y"] + box["height"] / 2
+    name = (
+        await el.get_attribute("name")
+        or await el.get_attribute("placeholder")
+        or await el.evaluate("el => el.className")
+        or "element"
+    )
+    logger.info(f"[INFO] Курсор к {name} ({int(x)},{int(y)})")
+    if hasattr(GCURSOR, "click_absolute"):
+        await GCURSOR.click_absolute(x, y)
+    else:
+        if hasattr(GCURSOR, "move_to"):
+            await GCURSOR.move_to({"x": x, "y": y})
+        await GCURSOR.click(None)
+
+
 async def human_move_cursor(page, el, ctx: RunContext):
     """Плавно ведёт курсор к случайной точке внутри элемента ``el``."""
     b = await el.bounding_box()
@@ -523,10 +571,11 @@ async def human_move_cursor(page, el, ctx: RunContext):
     target_x = b["x"] + _rnd.uniform(8, b["width"] - 8)
     target_y = b["y"] + _rnd.uniform(8, b["height"] - 8)
 
+    if GCURSOR is None or not hasattr(GCURSOR, "move_to"):
+        return
     try:
         cur = page.mouse.position  # старые версии Playwright
     except AttributeError:
-        # сохраняем позицию сами
         cur = getattr(ctx, "mouse_pos", (0, 0))
     pivots = []
     if _rnd.random() < 0.7:
@@ -539,12 +588,12 @@ async def human_move_cursor(page, el, ctx: RunContext):
     pivots.append((target_x, target_y))
     cur_x, cur_y = cur
     for x, y in pivots:
-        await page.mouse.move(x, y, steps=_rnd.randint(8, 20))
+        await GCURSOR.move_to({"x": x, "y": y})
         ctx.mouse_pos = (x, y)
         cur_x, cur_y = x, y
     final_x = cur_x + _rnd.uniform(-4, 4)
     final_y = cur_y + _rnd.uniform(-3, 3)
-    await page.mouse.move(final_x, final_y, steps=3)
+    await GCURSOR.move_to({"x": final_x, "y": final_y})
     cur_x, cur_y = final_x, final_y
     ctx.mouse_pos = (cur_x, cur_y)
     sel = (
@@ -579,16 +628,25 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             if step >= 400:
                 parts = _rnd.randint(3, 6)
                 for _ in range(parts):
-                    await page.mouse.wheel(0, step / parts)
+                    if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
+                        await GCURSOR.wheel(0, step / parts)
+                    else:
+                        await page.mouse.wheel(0, step / parts)
                     await asyncio.sleep(_rnd.uniform(0.06, 0.12))
             else:
-                await page.mouse.wheel(0, step)
+                if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
+                    await GCURSOR.wheel(0, step)
+                else:
+                    await page.mouse.wheel(0, step)
             logger.info(f"[INFO] wheel вниз на {step}")
             await asyncio.sleep(_rnd.uniform(0.7, 1.7))
         elif action == "scroll_up":
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
             current_y = max(current_y - step, 0)
-            await page.mouse.wheel(0, -step)
+            if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
+                await GCURSOR.wheel(0, -step)
+            else:
+                await page.mouse.wheel(0, -step)
             logger.info(f"[INFO] wheel вверх на {step}")
             await asyncio.sleep(_rnd.uniform(0.5, 1.1))
         elif action == "pause":
@@ -600,9 +658,11 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             y = _rnd.randint(100, 680)
             dx = _rnd.randint(-10, 10)
             dy = _rnd.randint(-8, 8)
-            await page.mouse.move(x, y, steps=_rnd.randint(4, 10))
+            if GCURSOR is not None and hasattr(GCURSOR, "move_to"):
+                await GCURSOR.move_to({"x": x, "y": y})
             await asyncio.sleep(_rnd.uniform(0.08, 0.18))
-            await page.mouse.move(x + dx, y + dy, steps=2)
+            if GCURSOR is not None and hasattr(GCURSOR, "move_to"):
+                await GCURSOR.move_to({"x": x + dx, "y": y + dy})
             logger.info(f"[INFO] Мышь дрожит ({x},{y})")
             await asyncio.sleep(_rnd.uniform(0.10, 0.22))
         else:
@@ -613,7 +673,8 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                 if box:
                     x = box["x"] + _rnd.uniform(12, box["width"] - 12)
                     y = box["y"] + _rnd.uniform(12, box["height"] - 12)
-                    await page.mouse.move(x, y, steps=_rnd.randint(10, 22))
+                    if GCURSOR is not None and hasattr(GCURSOR, "move_to"):
+                        await GCURSOR.move_to({"x": x, "y": y})
                     logger.info(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})")
                     await asyncio.sleep(_rnd.uniform(0.4, 1.3))
 
@@ -667,10 +728,16 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         if step >= 400:
             parts = _rnd.randint(3, 6)
             for _ in range(parts):
-                await page.mouse.wheel(0, direction * step / parts)
+                if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
+                    await GCURSOR.wheel(0, direction * step / parts)
+                else:
+                    await page.mouse.wheel(0, direction * step / parts)
                 await asyncio.sleep(_rnd.uniform(0.06, 0.12))
         else:
-            await page.mouse.wheel(0, direction * step)
+            if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
+                await GCURSOR.wheel(0, direction * step)
+            else:
+                await page.mouse.wheel(0, direction * step)
         logger.info(f"[SCROLL] wheel {'down' if direction>0 else 'up'} {step}")
 
         # Остановки возле блоков с текстом
@@ -708,10 +775,16 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         if abs(delta) >= 400:
             parts = _rnd.randint(3, 6)
             for _ in range(parts):
-                await page.mouse.wheel(0, delta / parts)
+                if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
+                    await GCURSOR.wheel(0, delta / parts)
+                else:
+                    await page.mouse.wheel(0, delta / parts)
                 await asyncio.sleep(_rnd.uniform(0.06, 0.12))
         else:
-            await page.mouse.wheel(0, delta)
+            if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
+                await GCURSOR.wheel(0, delta)
+            else:
+                await page.mouse.wheel(0, delta)
         logger.info(
             "[SCROLL] wheel small: scroll_y=%s → %s, form_top=%s, step=%s",
             scroll_y,
@@ -786,7 +859,8 @@ if (window.WebGL2RenderingContext) {{
         )
         logger.info("[INFO] Patched WebGL2 getParameter")
         page = await context.new_page()
-        _ = create_cursor(page)  # вызываем ради побочных эффектов
+        global GCURSOR
+        GCURSOR = create_cursor(page)
 
         async def _abort(route):
             await should_abort(route, ctx)

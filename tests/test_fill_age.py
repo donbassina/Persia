@@ -11,8 +11,10 @@ def load_module(monkeypatch):
     path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Samokat-TP.py")
     spec = importlib.util.spec_from_file_location("stp", path)
     stp = importlib.util.module_from_spec(spec)
+
     class Resp:
         status_code = 200
+
     monkeypatch.setattr(requests, "post", lambda *a, **k: Resp())
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     spec.loader.exec_module(stp)

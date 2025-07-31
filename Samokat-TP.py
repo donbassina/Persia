@@ -34,7 +34,7 @@ from proxy_utils import parse_proxy, probe_proxy, ProxyError
 
 
 _REQUIRED = {
-    "playwright": ("1.44", "2.0"),
+    "playwright": ("1.43", "2.0"),
     "playwright-stealth": ("2.0.0", "3.0"),
 }
 
@@ -78,7 +78,13 @@ def send_webhook(result, webhook_url, ctx: RunContext):
         logger.error("webhook 3rd fail: %s", e)
 
 
-def send_result(ctx: RunContext, phone: str, webhook_url: str, headless_error: bool, proxy_used: bool) -> None:
+def send_result(
+    ctx: RunContext,
+    phone: str,
+    webhook_url: str,
+    headless_error: bool,
+    proxy_used: bool,
+) -> None:
     """Send final result via webhook and print JSON."""
     result: dict[str, str | bool | None] = {"phone": phone, "proxy_used": proxy_used}
 

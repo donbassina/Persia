@@ -24,32 +24,30 @@ def load_module(monkeypatch):
 def test_fill_age_selector(monkeypatch):
     stp = load_module(monkeypatch)
 
+    stp.selectors = {"form": {"age": "input[name='user_age']"}}
+
     class DummyElement:
+        def __init__(self):
+            self.clicked = False
+            self.filled = False
+
         async def click(self):
-            pass
+            self.clicked = True
 
         async def fill(self, _):
-            pass
+            self.filled = True
 
         async def input_value(self):
             return "18"
 
-    class Handle:
-        def __init__(self):
-            self.called = None
-            self.elems = [DummyElement(), DummyElement()]
-
-        def nth(self, idx):
-            self.called = idx
-            return self.elems[idx]
-
     class DummyPage:
         def __init__(self):
-            self.handle = Handle()
+            self.used_selector = None
+            self.elem = DummyElement()
 
-        def get_by_placeholder(self, val):
-            assert val == "0"
-            return self.handle
+        def locator(self, selector):
+            self.used_selector = selector
+            return self.elem
 
         async def wait_for_timeout(self, ms):
             pass
@@ -66,4 +64,4 @@ def test_fill_age_selector(monkeypatch):
     ctx = stp.RunContext()
     page = DummyPage()
     asyncio.run(stp.fill_age(page, "18", ctx))
-    assert page.handle.called == 1
+    assert page.used_selector == stp.selectors["form"]["age"]

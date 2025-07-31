@@ -1,9 +1,14 @@
-# Селекторы формы по-умолчанию.
-# При необходимости создавайте дополнительные YAML-файлы
-# (например, `foodexpress.yml`) с той же схемой ключей.
+# Updated selectors for production landing form
 form:
-  name:      'input[name="name"]'          # поле «Имя»
-  phone:     'input[name="phone"]'         # поле «Телефон»
-  checkbox:  'input[type="checkbox"]'      # чекбокс согласия
-  submit:    'button[type="submit"]'       # кнопка «Отправить»
-  thank_you: '.modal-thanks'               # поп-ап «Спасибо»
+  wrapper: "div.form-wrapper"
+  submit: 'button[type="submit"]'
+  name: 'input[name="user_name"]'
+  city: 'input[name="user_city"]'
+  phone: 'input[name="user_phone"]'
+  gender: 'input[name="user_gender"]'
+  age: 'input[name="user_age"]'
+  courier: 'input[name="user_courier_type"]'
+  policy: '.form-policy-checkbox'
+  city_item: '.form-list-item'
+  gender_item: '.form-list-item'
+  courier_item: '.form-list-item'

@@ -18,14 +18,19 @@ def load_module(monkeypatch):
     monkeypatch.setattr(requests, "post", lambda *a, **k: Resp())
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     spec.loader.exec_module(stp)
+
     class DummyCursor:
         page = type("P", (), {})()
+
         async def move_to(self, *a, **k):
             pass
+
         async def click(self, *a, **k):
             pass
+
         async def click_absolute(self, *a, **k):
             pass
+
         async def wheel(self, *a, **k):
             pass
 

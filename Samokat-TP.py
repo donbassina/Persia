@@ -564,7 +564,11 @@ async def human_move_cursor(page, el, ctx: RunContext):
     target_x = b["x"] + _rnd.uniform(8, b["width"] - 8)
     target_y = b["y"] + _rnd.uniform(8, b["height"] - 8)
 
-    cur = page.mouse.position
+    try:
+        cur = page.mouse.position  # старые версии Playwright
+    except AttributeError:
+        # сохраняем позицию сами
+        cur = getattr(ctx, "mouse_pos", (0, 0))
     pivots = []
     if _rnd.random() < 0.7:
         pivots.append(
@@ -577,12 +581,13 @@ async def human_move_cursor(page, el, ctx: RunContext):
     cur_x, cur_y = cur
     for x, y in pivots:
         await page.mouse.move(x, y, steps=_rnd.randint(8, 20))
+        ctx.mouse_pos = (x, y)
         cur_x, cur_y = x, y
-    await page.mouse.move(
-        cur_x + _rnd.uniform(-4, 4),
-        cur_y + _rnd.uniform(-3, 3),
-        steps=3,
-    )
+    final_x = cur_x + _rnd.uniform(-4, 4)
+    final_y = cur_y + _rnd.uniform(-3, 3)
+    await page.mouse.move(final_x, final_y, steps=3)
+    cur_x, cur_y = final_x, final_y
+    ctx.mouse_pos = (cur_x, cur_y)
     sel = (
         await el.get_attribute("name")
         or await el.get_attribute("placeholder")
@@ -865,9 +870,7 @@ if (window.WebGL2RenderingContext) {{
                 await page.wait_for_selector(
                     "div.form-wrapper", timeout=CFG["FORM_WRAPPER_TIMEOUT"]
                 )
-                logger.info(
-                    "[INFO] Контент формы загружен (div.form-wrapper найден)", ctx
-                )
+                logger.info("[INFO] Контент формы загружен (div.form-wrapper найден)")
             except Exception as e:
                 logger.warning(f" div.form-wrapper не найден: {e}")
 

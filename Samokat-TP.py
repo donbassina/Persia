@@ -15,6 +15,7 @@ import logging
 import requests
 
 from python_ghost_cursor.playwright_async import create_cursor
+from python_ghost_cursor.playwright_async._spoof import GhostCursor
 from playwright.async_api import async_playwright
 from playwright_stealth import stealth
 
@@ -46,12 +47,50 @@ logger = get_logger("samokat.main")
 _rnd = SystemRandom()  # единый генератор на весь скрипт
 
 # global ghost-cursor instance, created in run_browser
-GCURSOR = None
+GCURSOR: GhostCursor | None = None
 
 # selectors loaded from YAML profile in ``main``
 # default profile path: selectors/default.yml
 selectors: dict | None = None
 proxy_cfg: dict | None = None
+
+
+async def gc_move(x: float, y: float):
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    await GCURSOR.move_to({"x": x, "y": y})
+
+
+async def gc_click(target):
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    page = GCURSOR.page
+    el = None
+    if isinstance(target, str):
+        el = await page.query_selector(target)
+    else:
+        el = target
+    box = await el.bounding_box() if el else None
+    if box:
+        x = box["x"] + box["width"] / 2
+        y = box["y"] + box["height"] / 2
+        await gc_move(x, y)
+        if hasattr(GCURSOR, "click_absolute"):
+            await GCURSOR.click_absolute(x, y)
+        else:
+            await GCURSOR.click(None)
+        return
+    await GCURSOR.click(target if isinstance(target, str) else None)
+
+
+async def gc_wheel(delta_y: float):
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    if hasattr(GCURSOR, "wheel"):
+        await GCURSOR.wheel(0, delta_y)
+    else:
+        mouse = getattr(GCURSOR.page, "mouse")
+        await mouse.wheel(0, delta_y)
 
 
 def _to_bool(val: str | bool) -> bool:
@@ -522,45 +561,27 @@ async def human_type_city_autocomplete(page, selector: str, text: str, ctx: RunC
 
 
 async def ghost_click(selector_or_element):
-    """Click element using global ghost cursor and log movement."""
+    """Click element using ghost cursor with logging."""
     if GCURSOR is None:
-        return
+        raise RuntimeError("GCURSOR not initialized")
     page = GCURSOR.page
+    el = None
     if isinstance(selector_or_element, str):
         el = await page.query_selector(selector_or_element)
-        box = await el.bounding_box() if el else None
-        await GCURSOR.click(selector_or_element)
-        if box:
-            name = (
-                await el.get_attribute("name")
-                or await el.get_attribute("placeholder")
-                or await el.evaluate("el => el.className")
-                or selector_or_element
-            )
-            logger.info(
-                f"[INFO] Курсор к {name} ({int(box['x']+box['width']/2)},{int(box['y']+box['height']/2)})"
-            )
-        return
-
-    el = selector_or_element
-    box = await el.bounding_box()
-    if not box:
-        return
-    x = box["x"] + box["width"] / 2
-    y = box["y"] + box["height"] / 2
-    name = (
-        await el.get_attribute("name")
-        or await el.get_attribute("placeholder")
-        or await el.evaluate("el => el.className")
-        or "element"
-    )
-    logger.info(f"[INFO] Курсор к {name} ({int(x)},{int(y)})")
-    if hasattr(GCURSOR, "click_absolute"):
-        await GCURSOR.click_absolute(x, y)
     else:
-        if hasattr(GCURSOR, "move_to"):
-            await GCURSOR.move_to({"x": x, "y": y})
-        await GCURSOR.click(None)
+        el = selector_or_element
+    box = await el.bounding_box() if el else None
+    if box:
+        name = (
+            await el.get_attribute("name")
+            or await el.get_attribute("placeholder")
+            or await el.evaluate("el => el.className")
+            or (selector_or_element if isinstance(selector_or_element, str) else "element")
+        )
+        logger.info(
+            f"[INFO] Курсор к {name} ({int(box['x']+box['width']/2)},{int(box['y']+box['height']/2)})"
+        )
+    await gc_click(selector_or_element)
 
 
 async def human_move_cursor(page, el, ctx: RunContext):
@@ -571,12 +592,9 @@ async def human_move_cursor(page, el, ctx: RunContext):
     target_x = b["x"] + _rnd.uniform(8, b["width"] - 8)
     target_y = b["y"] + _rnd.uniform(8, b["height"] - 8)
 
-    if GCURSOR is None or not hasattr(GCURSOR, "move_to"):
-        return
-    try:
-        cur = page.mouse.position  # старые версии Playwright
-    except AttributeError:
-        cur = getattr(ctx, "mouse_pos", (0, 0))
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    cur = getattr(ctx, "mouse_pos", (0, 0))
     pivots = []
     if _rnd.random() < 0.7:
         pivots.append(
@@ -588,12 +606,12 @@ async def human_move_cursor(page, el, ctx: RunContext):
     pivots.append((target_x, target_y))
     cur_x, cur_y = cur
     for x, y in pivots:
-        await GCURSOR.move_to({"x": x, "y": y})
+        await gc_move(x, y)
         ctx.mouse_pos = (x, y)
         cur_x, cur_y = x, y
     final_x = cur_x + _rnd.uniform(-4, 4)
     final_y = cur_y + _rnd.uniform(-3, 3)
-    await GCURSOR.move_to({"x": final_x, "y": final_y})
+    await gc_move(final_x, final_y)
     cur_x, cur_y = final_x, final_y
     ctx.mouse_pos = (cur_x, cur_y)
     sel = (
@@ -628,25 +646,16 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             if step >= 400:
                 parts = _rnd.randint(3, 6)
                 for _ in range(parts):
-                    if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
-                        await GCURSOR.wheel(0, step / parts)
-                    else:
-                        await page.mouse.wheel(0, step / parts)
+                    await gc_wheel(step / parts)
                     await asyncio.sleep(_rnd.uniform(0.06, 0.12))
             else:
-                if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
-                    await GCURSOR.wheel(0, step)
-                else:
-                    await page.mouse.wheel(0, step)
+                await gc_wheel(step)
             logger.info(f"[INFO] wheel вниз на {step}")
             await asyncio.sleep(_rnd.uniform(0.7, 1.7))
         elif action == "scroll_up":
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
             current_y = max(current_y - step, 0)
-            if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
-                await GCURSOR.wheel(0, -step)
-            else:
-                await page.mouse.wheel(0, -step)
+            await gc_wheel(-step)
             logger.info(f"[INFO] wheel вверх на {step}")
             await asyncio.sleep(_rnd.uniform(0.5, 1.1))
         elif action == "pause":
@@ -658,11 +667,9 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             y = _rnd.randint(100, 680)
             dx = _rnd.randint(-10, 10)
             dy = _rnd.randint(-8, 8)
-            if GCURSOR is not None and hasattr(GCURSOR, "move_to"):
-                await GCURSOR.move_to({"x": x, "y": y})
+            await gc_move(x, y)
             await asyncio.sleep(_rnd.uniform(0.08, 0.18))
-            if GCURSOR is not None and hasattr(GCURSOR, "move_to"):
-                await GCURSOR.move_to({"x": x + dx, "y": y + dy})
+            await gc_move(x + dx, y + dy)
             logger.info(f"[INFO] Мышь дрожит ({x},{y})")
             await asyncio.sleep(_rnd.uniform(0.10, 0.22))
         else:
@@ -673,8 +680,7 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                 if box:
                     x = box["x"] + _rnd.uniform(12, box["width"] - 12)
                     y = box["y"] + _rnd.uniform(12, box["height"] - 12)
-                    if GCURSOR is not None and hasattr(GCURSOR, "move_to"):
-                        await GCURSOR.move_to({"x": x, "y": y})
+                    await gc_move(x, y)
                     logger.info(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})")
                     await asyncio.sleep(_rnd.uniform(0.4, 1.3))
 
@@ -728,16 +734,10 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         if step >= 400:
             parts = _rnd.randint(3, 6)
             for _ in range(parts):
-                if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
-                    await GCURSOR.wheel(0, direction * step / parts)
-                else:
-                    await page.mouse.wheel(0, direction * step / parts)
+                await gc_wheel(direction * step / parts)
                 await asyncio.sleep(_rnd.uniform(0.06, 0.12))
         else:
-            if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
-                await GCURSOR.wheel(0, direction * step)
-            else:
-                await page.mouse.wheel(0, direction * step)
+            await gc_wheel(direction * step)
         logger.info(f"[SCROLL] wheel {'down' if direction>0 else 'up'} {step}")
 
         # Остановки возле блоков с текстом
@@ -775,16 +775,10 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         if abs(delta) >= 400:
             parts = _rnd.randint(3, 6)
             for _ in range(parts):
-                if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
-                    await GCURSOR.wheel(0, delta / parts)
-                else:
-                    await page.mouse.wheel(0, delta / parts)
+                await gc_wheel(delta / parts)
                 await asyncio.sleep(_rnd.uniform(0.06, 0.12))
         else:
-            if GCURSOR is not None and hasattr(GCURSOR, "wheel"):
-                await GCURSOR.wheel(0, delta)
-            else:
-                await page.mouse.wheel(0, delta)
+            await gc_wheel(delta)
         logger.info(
             "[SCROLL] wheel small: scroll_y=%s → %s, form_top=%s, step=%s",
             scroll_y,
@@ -861,6 +855,12 @@ if (window.WebGL2RenderingContext) {{
         page = await context.new_page()
         global GCURSOR
         GCURSOR = create_cursor(page)
+        if not hasattr(GCURSOR, "wheel"):
+            async def _wheel(dx: float, dy: float):
+                m = getattr(page, "mouse")
+                await m.wheel(dx, dy)
+
+            GCURSOR.wheel = _wheel  # type: ignore[attr-defined]
 
         async def _abort(route):
             await should_abort(route, ctx)

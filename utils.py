@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 import os
 import sys
@@ -33,6 +33,7 @@ class RunContext:
     postback: str | None = None
     browser_closed_manually: bool = False
     first_abort_logged: bool = False
+    errors: list[str] = field(default_factory=list)
 
     def clone(self) -> "RunContext":
         """Return a deep copy of this context."""

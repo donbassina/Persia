@@ -18,7 +18,8 @@ jobs:
       - run: pip install --upgrade pip
       - run: pip install -r requirements.txt
       - run: pip install ruff black pytest
-      - run: playwright install --with-deps chromium
+      - name: Run Playwright install
+        run: playwright install chromium
       - run: ruff check .
       - run: black --check .
       - run: pytest -q

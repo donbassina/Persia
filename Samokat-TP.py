@@ -34,7 +34,7 @@ from proxy_utils import parse_proxy, probe_proxy, ProxyError
 
 
 _REQUIRED = {
-    "playwright": ("1.44", "2.0"),
+    "playwright": ("1.43", "2.0"),
     "playwright-stealth": ("2.0.0", "3.0"),
 }
 
@@ -76,6 +76,42 @@ def send_webhook(result, webhook_url, ctx: RunContext):
                 )
                 time.sleep(60)
         logger.error("webhook 3rd fail: %s", e)
+
+
+def send_result(
+    ctx: RunContext,
+    phone: str,
+    webhook_url: str,
+    headless_error: bool,
+    proxy_used: bool,
+) -> None:
+    """Send final result via webhook and print JSON."""
+    result: dict[str, str | bool | None] = {"phone": phone, "proxy_used": proxy_used}
+
+    if ctx.errors:
+        result["error"] = ", ".join(ctx.errors)
+        if ctx.screenshot_path:
+            result["screenshot"] = os.path.abspath(ctx.screenshot_path)
+    else:
+        if ctx.postback:
+            result["POSTBACK"] = ctx.postback
+        else:
+            result["error"] = "POSTBACK missing"
+            if ctx.screenshot_path:
+                result["screenshot"] = os.path.abspath(ctx.screenshot_path)
+
+    if ctx.log_file:
+        result["log"] = os.path.abspath(ctx.log_file)
+
+    if headless_error and "error" not in result:
+        result["error"] = "bad headless value"
+
+    result_state = "SUCCESS" if "error" not in result else "ERROR"
+    logger.info("RESULT: %s", result_state)
+
+    if not ctx.browser_closed_manually:
+        send_webhook(result, webhook_url, ctx)
+    print(json.dumps(result, ensure_ascii=False))
 
 
 try:
@@ -427,7 +463,7 @@ async def fill_gender(page, gender, ctx: RunContext, retries=3):
 async def fill_age(page, age, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            input_box = page.get_by_placeholder("0")
+            input_box = page.get_by_placeholder("0").nth(1)
             await human_move_cursor(page, input_box, ctx)
             await input_box.click()
             await page.wait_for_timeout(100)
@@ -553,7 +589,7 @@ async def human_move_cursor(page, el, ctx: RunContext):
         or await el.evaluate("el => el.className")
         or "element"
     )
-    logger.info(f"[INFO] Курсор к {sel} ({int(target_x)},{int(target_y)})", ctx)
+    logger.info(f"[INFO] Курсор к {sel} ({int(target_x)},{int(target_y)})")
 
 
 async def emulate_user_reading(page, total_time, ctx: RunContext):
@@ -603,7 +639,7 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             await page.mouse.move(x, y, steps=_rnd.randint(4, 10))
             await asyncio.sleep(_rnd.uniform(0.08, 0.18))
             await page.mouse.move(x + dx, y + dy, steps=2)
-            logger.info(f"[INFO] Мышь дрожит ({x},{y})", ctx)
+            logger.info(f"[INFO] Мышь дрожит ({x},{y})")
             await asyncio.sleep(_rnd.uniform(0.10, 0.22))
         else:
             sel = _rnd.choice(blocks)
@@ -614,7 +650,7 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                     x = box["x"] + _rnd.uniform(12, box["width"] - 12)
                     y = box["y"] + _rnd.uniform(12, box["height"] - 12)
                     await page.mouse.move(x, y, steps=_rnd.randint(10, 22))
-                    logger.info(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})", ctx)
+                    logger.info(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})")
                     await asyncio.sleep(_rnd.uniform(0.4, 1.3))
 
 
@@ -958,8 +994,10 @@ if (window.WebGL2RenderingContext) {{
                         "Не заполнены поля: %s",
                         ", ".join(empty_fields),
                     )
+                    ctx.errors = empty_fields
                     error_msg = f"Не заполнены поля: {', '.join(empty_fields)}"
                 else:
+                    ctx.errors = []
                     error_msg = ""
             except Exception as e:
                 logger.error(f" Ошибка при проверке/скриншоте: {e}")
@@ -1130,32 +1168,10 @@ with open(ctx.log_file, encoding="utf-8") as f:
     for line in f:
         if "[ERROR]" in line:
             error_lines.append(line.strip())
-all_errors = error_lines
-error_msg = "\n".join(all_errors).strip()
+if error_lines and not ctx.errors:
+    ctx.errors = error_lines
 
 proxy_used = proxy_cfg is not None
 logger.info("proxy_used: %s", proxy_used)
 
-result = {"phone": user_phone, "proxy_used": proxy_used}
-
-
-if error_msg:
-    result["error"] = error_msg
-else:
-    result["POSTBACK"] = ctx.postback
-
-if headless_error:
-    result["error"] = "bad headless value"
-
-if ctx.screenshot_path:
-    result["screenshot"] = os.path.abspath(ctx.screenshot_path)
-
-result["log"] = os.path.abspath(ctx.log_file)
-
-result_state = "SUCCESS" if "error" not in result else "ERROR"
-logger.info("RESULT: %s", result_state)
-
-
-if not ctx.browser_closed_manually:
-    send_webhook(result, webhook_url, ctx)
-print(json.dumps(result, ensure_ascii=False))
+send_result(ctx, user_phone, webhook_url, headless_error, proxy_used)

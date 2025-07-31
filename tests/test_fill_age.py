@@ -18,6 +18,18 @@ def load_module(monkeypatch):
     monkeypatch.setattr(requests, "post", lambda *a, **k: Resp())
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     spec.loader.exec_module(stp)
+    class DummyCursor:
+        page = type("P", (), {})()
+        async def move_to(self, *a, **k):
+            pass
+        async def click(self, *a, **k):
+            pass
+        async def click_absolute(self, *a, **k):
+            pass
+        async def wheel(self, *a, **k):
+            pass
+
+    stp.GCURSOR = DummyCursor()
     return stp
 
 
@@ -39,6 +51,15 @@ def test_fill_age_selector(monkeypatch):
 
         async def input_value(self):
             return "18"
+
+        async def bounding_box(self):
+            return {"x": 0, "y": 0, "width": 10, "height": 10}
+
+        async def get_attribute(self, _):
+            return None
+
+        async def evaluate(self, _):
+            return ""
 
     class DummyPage:
         def __init__(self):

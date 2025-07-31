@@ -449,9 +449,7 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
             await human_move_cursor(page, input_box, ctx)
             await input_box.click()
             item_sel = selectors["form"]["courier_item"]
-            await page.locator(item_sel).get_by_text(
-                courier_type, exact=True
-            ).click()
+            await page.locator(item_sel).get_by_text(courier_type, exact=True).click()
             return True
         except Exception as e:
             logger.warning(
@@ -787,7 +785,7 @@ if (window.WebGL2RenderingContext) {{
         )
         logger.info("[INFO] Patched WebGL2 getParameter")
         page = await context.new_page()
-        cursor = create_cursor(page)
+        _ = create_cursor(page)  # вызываем ради побочных эффектов
 
         async def _abort(route):
             await should_abort(route, ctx)
@@ -984,7 +982,6 @@ if (window.WebGL2RenderingContext) {{
                 await page.evaluate(f"window.scrollTo(0, {new_y})")
                 await asyncio.sleep(_rnd.uniform(0.7, 1.7))
                 try:
-                    button_selector = selectors["form"]["submit"]
                     old_url = page.url
                     try:
                         await submit_form(page, ctx)

@@ -576,7 +576,11 @@ async def ghost_click(selector_or_element):
             await el.get_attribute("name")
             or await el.get_attribute("placeholder")
             or await el.evaluate("el => el.className")
-            or (selector_or_element if isinstance(selector_or_element, str) else "element")
+            or (
+                selector_or_element
+                if isinstance(selector_or_element, str)
+                else "element"
+            )
         )
         logger.info(
             f"[INFO] Курсор к {name} ({int(box['x']+box['width']/2)},{int(box['y']+box['height']/2)})"
@@ -856,6 +860,7 @@ if (window.WebGL2RenderingContext) {{
         global GCURSOR
         GCURSOR = create_cursor(page)
         if not hasattr(GCURSOR, "wheel"):
+
             async def _wheel(dx: float, dy: float):
                 m = getattr(page, "mouse")
                 await m.wheel(dx, dy)

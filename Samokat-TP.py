@@ -46,6 +46,7 @@ logger = get_logger("samokat.main")
 _rnd = SystemRandom()  # единый генератор на весь скрипт
 
 # selectors loaded from YAML profile in ``main``
+# default profile path: selectors/default.yml
 selectors: dict | None = None
 proxy_cfg: dict | None = None
 

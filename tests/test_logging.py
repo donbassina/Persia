@@ -21,6 +21,7 @@ def _run_script(monkeypatch, tmp_path, ok=True):
         return stp.ctx.log_file
 
     async def dummy_run_browser(ctx):
+        ctx.postback = "ok"
         return None
 
     if hasattr(stp, "run_browser"):
@@ -29,6 +30,13 @@ def _run_script(monkeypatch, tmp_path, ok=True):
         asyncio.run(stp.main(stp.ctx))
     except SystemExit:
         pass
+    stp.send_result(
+        stp.ctx,
+        stp.user_phone,
+        stp.webhook_url,
+        stp.headless_error,
+        stp.proxy_cfg is not None,
+    )
     return stp.ctx.log_file
 
 

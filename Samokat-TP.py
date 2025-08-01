@@ -750,6 +750,41 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
 # --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
 # --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
 
+async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
+    """
+    Плавный «человеческий» скролл к div.form-wrapper
+    ─ использует абсолютно те же шаги, задержки и wheel-scroll,
+      что и во время emulate_user_reading; никаких drag-scroll
+      или scrollIntoView.
+    """
+    start = asyncio.get_event_loop().time()
+    viewport_h = await page.evaluate("window.innerHeight")
+    while True:
+        # форма уже видна? ─ останавливаемся
+        form = await page.query_selector("div.form-wrapper")
+        if form:
+            bb = await form.bounding_box()
+            if bb and 0 <= bb["y"] < viewport_h // 4:
+                return  # цель достигнута
+
+        # используем те же «большие»/«средние» шаги, что и в emulate_user_reading
+        step = _rnd.choice(
+            [
+                _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
+                _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
+            ]
+        )
+        if step > 200:
+            step = 200
+        await human_scroll(step)
+        logger.info(f"[SCROLL] to-form wheel down {step}")
+        await asyncio.sleep(_rnd.uniform(0.7, 1.7))
+
+        # ограничение по времени, чтобы не зациклиться
+        if asyncio.get_event_loop().time() - start > timeout:
+            logger.warning("scroll_to_form_like_reading: timeout, форма так и не появилась")
+            return
+
 
 # ====================================================================================
 # Плавный, крупный и потом мелкий скролл к форме, без телепортов
@@ -1001,6 +1036,11 @@ if (window.WebGL2RenderingContext) {{
             # Быстрые крупные скроллы к форме, без телепортов
             # ====================================================================================
             await smooth_scroll_to_form(page, ctx)
+
+            # ====================================================================================
+            # Скроллим к форме теми же мелкими шагами, что и при «гулянии»
+            # ====================================================================================
+            await scroll_to_form_like_reading(page, ctx)
 
             # ====================================================================================
             # Этап 4. Клик мышью по каждому полю, заполнение всех полей, установка галочки

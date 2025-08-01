@@ -86,11 +86,68 @@ async def gc_click(target):
 async def gc_wheel(delta_y: float):
     if GCURSOR is None:
         raise RuntimeError("GCURSOR not initialized")
-    if hasattr(GCURSOR, "wheel"):
-        await GCURSOR.wheel(0, delta_y)
-    else:
-        mouse = getattr(GCURSOR.page, "mouse")
-        await mouse.wheel(0, delta_y)
+    if not hasattr(GCURSOR, "wheel"):
+        raise RuntimeError("GCURSOR lacks wheel method")
+    await GCURSOR.wheel(0, delta_y)
+
+
+async def gc_press():
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    if not hasattr(GCURSOR, "down"):
+        raise RuntimeError("GCURSOR lacks down method")
+    await GCURSOR.down()
+
+
+async def gc_release():
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    if not hasattr(GCURSOR, "up"):
+        raise RuntimeError("GCURSOR lacks up method")
+    await GCURSOR.up()
+
+
+async def human_scroll(total_px: int):
+    """Scroll page in a human-like manner using the mouse wheel."""
+    direction = 1 if total_px > 0 else -1
+    remain = abs(total_px)
+    while remain > 0:
+        step = min(int(_rnd.lognormvariate(5.1, 0.5)), remain)
+        await gc_wheel(direction * step + _rnd.randint(-15, 15))
+        v = step
+        while v > 5:
+            await gc_wheel(direction * int(v))
+            v *= 0.92
+            await asyncio.sleep(0.016)
+        remain -= step
+        if _rnd.random() < 0.14:
+            await gc_wheel(-direction * _rnd.randint(20, 60))
+        if _rnd.random() < 0.35:
+            await asyncio.sleep(_rnd.uniform(0.25, 0.9))
+
+
+async def drag_scroll(total_px: int):
+    """Simulate scrollbar drag for scrolling."""
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    page = GCURSOR.page
+    scroll_height = await page.evaluate("document.body.scrollHeight")
+    viewport_height = await page.evaluate("window.innerHeight")
+    if scroll_height <= viewport_height:
+        return
+    scroll_y = await page.evaluate("window.scrollY")
+    max_scroll = scroll_height - viewport_height
+    new_scroll = max(0, min(scroll_y + total_px, max_scroll))
+    slider_h = viewport_height * viewport_height / scroll_height
+    track_h = viewport_height - slider_h
+    start_y = scroll_y / max_scroll * track_h + slider_h / 2
+    end_y = new_scroll / max_scroll * track_h + slider_h / 2
+    x = await page.evaluate("window.innerWidth - 4")
+    await gc_move(x, start_y)
+    await gc_press()
+    await gc_move(x, end_y)
+    await gc_release()
+    await asyncio.sleep(_rnd.uniform(0.1, 0.3))
 
 
 def _to_bool(val: str | bool) -> bool:
@@ -647,20 +704,20 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                 ]
             )
             current_y = min(current_y + step, height - 1)
-            if step >= 400:
-                parts = _rnd.randint(3, 6)
-                for _ in range(parts):
-                    await gc_wheel(step / parts)
-                    await asyncio.sleep(_rnd.uniform(0.06, 0.12))
+            if _rnd.random() < 0.05:
+                await drag_scroll(step)
             else:
-                await gc_wheel(step)
-            logger.info(f"[INFO] wheel вниз на {step}")
+                await human_scroll(step)
+            logger.info(f"[SCROLL] wheel down {step}")
             await asyncio.sleep(_rnd.uniform(0.7, 1.7))
         elif action == "scroll_up":
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
             current_y = max(current_y - step, 0)
-            await gc_wheel(-step)
-            logger.info(f"[INFO] wheel вверх на {step}")
+            if _rnd.random() < 0.05:
+                await drag_scroll(-step)
+            else:
+                await human_scroll(-step)
+            logger.info(f"[SCROLL] wheel up {step}")
             await asyncio.sleep(_rnd.uniform(0.5, 1.1))
         elif action == "pause":
             t = _rnd.uniform(1.2, 3.8)
@@ -735,13 +792,10 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         else:
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
         new_y = scroll_y + direction * step
-        if step >= 400:
-            parts = _rnd.randint(3, 6)
-            for _ in range(parts):
-                await gc_wheel(direction * step / parts)
-                await asyncio.sleep(_rnd.uniform(0.06, 0.12))
+        if _rnd.random() < 0.05:
+            await drag_scroll(direction * step)
         else:
-            await gc_wheel(direction * step)
+            await human_scroll(direction * step)
         logger.info(f"[SCROLL] wheel {'down' if direction>0 else 'up'} {step}")
 
         # Остановки возле блоков с текстом
@@ -776,13 +830,10 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         else:
             new_y = scroll_y - step
             delta = -step
-        if abs(delta) >= 400:
-            parts = _rnd.randint(3, 6)
-            for _ in range(parts):
-                await gc_wheel(delta / parts)
-                await asyncio.sleep(_rnd.uniform(0.06, 0.12))
+        if _rnd.random() < 0.05:
+            await drag_scroll(delta)
         else:
-            await gc_wheel(delta)
+            await human_scroll(delta)
         logger.info(
             "[SCROLL] wheel small: scroll_y=%s → %s, form_top=%s, step=%s",
             scroll_y,

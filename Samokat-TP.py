@@ -754,27 +754,27 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
     """
     Плавный «человеческий» скролл к div.form-wrapper.
     Использует ровно те же wheel-scroll, шаги, задержки, что и в emulate_user_reading.
-    Никаких scrollIntoView, drag-scroll и резких скачков.
-    Корректно доезжает, чтобы форма реально попала в видимую область (viewport).
-    После выхода из функции форма должна быть видна на экране полностью или хотя бы её верх.
+    После выхода из функции должна быть видна хотя бы часть формы.
     """
     import asyncio
+
     start = asyncio.get_event_loop().time()
     viewport_h = await page.evaluate("window.innerHeight")
+
     while True:
         form = await page.query_selector("div.form-wrapper")
         if form:
             bb = await form.bounding_box()
-            scroll_y = await page.evaluate("window.scrollY")
-            # Новое условие: если хоть часть формы видна на экране, выходим
+            # если форма хотя-бы частично видна — стоп
             if bb and 0 <= bb["y"] < viewport_h - 20:
                 return
-            # Если форма выше окна, прокручиваем вверх
+            # форма ушла выше — прокручиваем вверх
             if bb and bb["y"] < 0:
                 await human_scroll(-100)
                 await asyncio.sleep(_rnd.uniform(0.6, 1.2))
                 continue
-        # Обычный "прогулочный" шаг вниз (ровно как в emulate_user_reading)
+
+        # «прогулочный» шаг вниз, точно как в emulate_user_reading
         step = _rnd.choice([
             _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
             _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
@@ -783,6 +783,8 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         await human_scroll(step)
         logger.info(f"[SCROLL] to-form wheel down {step}")
         await asyncio.sleep(_rnd.uniform(0.7, 1.7))
+
+        # таймаут, чтобы не висеть бесконечно
         if asyncio.get_event_loop().time() - start > timeout:
             logger.warning("scroll_to_form_like_reading: timeout, форма так и не появилась")
             return

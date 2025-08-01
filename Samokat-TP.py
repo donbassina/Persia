@@ -108,18 +108,18 @@ async def human_scroll(total_px: int):
     direction = 1 if total_px > 0 else -1
     remain = abs(total_px)
     while remain > 0:
-        step = min(int(_rnd.lognormvariate(4.4, 0.45)), remain, 200)
-        await gc_wheel(direction * step + _rnd.randint(-8, 8))
+        step = min(int(_rnd.lognormvariate(3.9, 0.45)), remain, 200)
+        await gc_wheel(direction * step + _rnd.randint(-0, 0))
         v = step
         while v > 3:
             await gc_wheel(direction * int(v))
-            v *= 0.90
+            v *= 0.75
             await asyncio.sleep(0.016)
         remain -= step
         if _rnd.random() < 0.14:
-            await gc_wheel(-direction * _rnd.randint(20, 60))
+            await gc_wheel(-direction * _rnd.randint(0, 0))
         if _rnd.random() < 0.35:
-            await asyncio.sleep(_rnd.uniform(0.25, 0.9))
+            await asyncio.sleep(_rnd.uniform(1.25, 4.9))
 
 
 async def drag_scroll(total_px: int):
@@ -699,10 +699,10 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                     _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
                 ]
             )
-            if step > 320:
-                step = 320
+            if step > 200:
+                step = 200
             current_y = min(current_y + step, height - 1)
-            if _rnd.random() < 0.02:
+            if _rnd.random() < 0.005:
                 await drag_scroll(step)
             else:
                 await human_scroll(step)
@@ -713,7 +713,7 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             if step > 320:
                 step = 320
             current_y = max(current_y - step, 0)
-            if _rnd.random() < 0.02:
+            if _rnd.random() < 0.005:
                 await drag_scroll(-step)
             else:
                 await human_scroll(-step)
@@ -807,12 +807,12 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
             if el:
                 b2 = await el.bounding_box()
                 if b2 and abs(b2["y"] - new_y) < 60:
-                    pause_t = _rnd.uniform(1.2, 3.2)
+                    pause_t = _rnd.uniform(1.2, 4.2)
                     logger.info(f"[INFO] Пауза у блока {sel} {pause_t:.1f} сек")
                     await asyncio.sleep(pause_t)
                     break
 
-        await asyncio.sleep(_rnd.uniform(0.8, 2.1))
+        await asyncio.sleep(_rnd.uniform(3.8, 5.1))
 
         # Дальше стандартные шаги
         diff = form_top - viewport_height // 4
@@ -974,7 +974,7 @@ if (window.WebGL2RenderingContext) {{
             load_sec = max(load_ms / 1000, 0)
 
             min_read = 1.5  # минимум «чтения», сек
-            base_read = _rnd.uniform(10, 25)
+            base_read = _rnd.uniform(2, 6)
             total_time = max(min_read, base_read - max(0, 7 - load_sec))
 
             logger.info(f"[INFO] Имитация “чтения” лендинга: {total_time:.1f} сек")

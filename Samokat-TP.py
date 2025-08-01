@@ -752,35 +752,37 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
 
 async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
     """
-    Плавный «человеческий» скролл к div.form-wrapper
-    ─ использует абсолютно те же шаги, задержки и wheel-scroll,
-      что и во время emulate_user_reading; никаких drag-scroll
-      или scrollIntoView.
+    Плавный «человеческий» скролл к div.form-wrapper.
+    Использует ровно те же wheel-scroll, шаги, задержки, что и в emulate_user_reading.
+    Никаких scrollIntoView, drag-scroll и резких скачков.
+    Корректно доезжает, чтобы форма реально попала в видимую область (viewport).
+    После выхода из функции форма должна быть видна на экране полностью или хотя бы её верх.
     """
+    import asyncio
     start = asyncio.get_event_loop().time()
     viewport_h = await page.evaluate("window.innerHeight")
     while True:
-        # форма уже видна? ─ останавливаемся
         form = await page.query_selector("div.form-wrapper")
         if form:
             bb = await form.bounding_box()
-            if bb and 0 <= bb["y"] < viewport_h // 4:
-                return  # цель достигнута
-
-        # используем те же «большие»/«средние» шаги, что и в emulate_user_reading
-        step = _rnd.choice(
-            [
-                _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
-                _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
-            ]
-        )
-        if step > 200:
-            step = 200
+            scroll_y = await page.evaluate("window.scrollY")
+            # Новое условие: если хоть часть формы видна на экране, выходим
+            if bb and 0 <= bb["y"] < viewport_h - 20:
+                return
+            # Если форма выше окна, прокручиваем вверх
+            if bb and bb["y"] < 0:
+                await human_scroll(-100)
+                await asyncio.sleep(_rnd.uniform(0.6, 1.2))
+                continue
+        # Обычный "прогулочный" шаг вниз (ровно как в emulate_user_reading)
+        step = _rnd.choice([
+            _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
+            _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
+        ])
+        step = min(step, 200)
         await human_scroll(step)
         logger.info(f"[SCROLL] to-form wheel down {step}")
         await asyncio.sleep(_rnd.uniform(0.7, 1.7))
-
-        # ограничение по времени, чтобы не зациклиться
         if asyncio.get_event_loop().time() - start > timeout:
             logger.warning("scroll_to_form_like_reading: timeout, форма так и не появилась")
             return

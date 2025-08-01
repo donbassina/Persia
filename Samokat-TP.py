@@ -812,7 +812,9 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
             if el:
                 b2 = await el.bounding_box()
                 if b2 and abs(b2["y"] - new_y) < 60:
-                    time_left = timeout - (asyncio.get_event_loop().time() - start_ts) - 1
+                    time_left = (
+                        timeout - (asyncio.get_event_loop().time() - start_ts) - 1
+                    )
                     pause_t = min(_rnd.uniform(*block_pause), max(time_left, 0))
                     logger.info(f"[INFO] Пауза у блока {sel} {pause_t:.1f} сек")
                     await asyncio.sleep(pause_t)
@@ -850,9 +852,7 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         await asyncio.sleep(0.06)
 
         elapsed = asyncio.get_event_loop().time() - start_ts
-        logger.info(
-            "[SCROLL] iter %s/%s elapsed=%.2fs", i + 1, max_iters, elapsed
-        )
+        logger.info("[SCROLL] iter %s/%s elapsed=%.2fs", i + 1, max_iters, elapsed)
         if elapsed > timeout:
             break
 

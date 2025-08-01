@@ -93,18 +93,14 @@ async def gc_wheel(delta_y: float):
 
 async def gc_press():
     if GCURSOR is None:
-        raise RuntimeError("GCURSOR not initialized")
-    if not hasattr(GCURSOR, "down"):
-        raise RuntimeError("GCURSOR lacks down method")
-    await GCURSOR.down()
+        return
+    await GCURSOR.page.mouse.down()
 
 
 async def gc_release():
     if GCURSOR is None:
-        raise RuntimeError("GCURSOR not initialized")
-    if not hasattr(GCURSOR, "up"):
-        raise RuntimeError("GCURSOR lacks up method")
-    await GCURSOR.up()
+        return
+    await GCURSOR.page.mouse.up()
 
 
 async def human_scroll(total_px: int):
@@ -112,12 +108,12 @@ async def human_scroll(total_px: int):
     direction = 1 if total_px > 0 else -1
     remain = abs(total_px)
     while remain > 0:
-        step = min(int(_rnd.lognormvariate(5.1, 0.5)), remain)
-        await gc_wheel(direction * step + _rnd.randint(-15, 15))
+        step = min(int(_rnd.lognormvariate(4.4, 0.45)), remain, 200)
+        await gc_wheel(direction * step + _rnd.randint(-8, 8))
         v = step
-        while v > 5:
+        while v > 3:
             await gc_wheel(direction * int(v))
-            v *= 0.92
+            v *= 0.90
             await asyncio.sleep(0.016)
         remain -= step
         if _rnd.random() < 0.14:
@@ -703,8 +699,10 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                     _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
                 ]
             )
+            if step > 320:
+                step = 320
             current_y = min(current_y + step, height - 1)
-            if _rnd.random() < 0.05:
+            if _rnd.random() < 0.02:
                 await drag_scroll(step)
             else:
                 await human_scroll(step)
@@ -712,8 +710,10 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             await asyncio.sleep(_rnd.uniform(0.7, 1.7))
         elif action == "scroll_up":
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
+            if step > 320:
+                step = 320
             current_y = max(current_y - step, 0)
-            if _rnd.random() < 0.05:
+            if _rnd.random() < 0.02:
                 await drag_scroll(-step)
             else:
                 await human_scroll(-step)
@@ -791,8 +791,10 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
             )
         else:
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
+        if step > 320:
+            step = 320
         new_y = scroll_y + direction * step
-        if _rnd.random() < 0.05:
+        if _rnd.random() < 0.02:
             await drag_scroll(direction * step)
         else:
             await human_scroll(direction * step)
@@ -823,6 +825,8 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
             step = CFG["SCROLL_STEP"]["fine"][2]
         else:
             step = CFG["SCROLL_STEP"]["fine"][3]
+        if step > 320:
+            step = 320
 
         if diff > 0:
             new_y = scroll_y + step
@@ -830,7 +834,7 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         else:
             new_y = scroll_y - step
             delta = -step
-        if _rnd.random() < 0.05:
+        if _rnd.random() < 0.02:
             await drag_scroll(delta)
         else:
             await human_scroll(delta)

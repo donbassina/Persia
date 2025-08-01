@@ -761,8 +761,13 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
     if not form:
         logger.warning("div.form-wrapper не найден")
         return
+    timeout = CFG["SCROLL_TO_FORM"]["TIMEOUT"]
+    max_iters = CFG["SCROLL_TO_FORM"]["MAX_ITERS"]
+    block_pause = CFG["SCROLL_TO_FORM"]["BLOCK_PAUSE"]
+    fine_steps = CFG["SCROLL_TO_FORM"]["FINE_STEPS"]
+    start_ts = asyncio.get_event_loop().time()
 
-    while True:
+    for i in range(max_iters):
         b = await form.bounding_box()
         if not b:
             logger.warning("Не удалось получить bounding_box формы")
@@ -807,33 +812,30 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
             if el:
                 b2 = await el.bounding_box()
                 if b2 and abs(b2["y"] - new_y) < 60:
-                    pause_t = _rnd.uniform(1.2, 4.2)
+                    time_left = timeout - (asyncio.get_event_loop().time() - start_ts) - 1
+                    pause_t = min(_rnd.uniform(*block_pause), max(time_left, 0))
                     logger.info(f"[INFO] Пауза у блока {sel} {pause_t:.1f} сек")
                     await asyncio.sleep(pause_t)
                     break
 
-        await asyncio.sleep(_rnd.uniform(3.8, 5.1))
+        time_left = timeout - (asyncio.get_event_loop().time() - start_ts) - 1
+        await asyncio.sleep(min(_rnd.uniform(0.2, 0.5), max(time_left, 0)))
 
-        # Дальше стандартные шаги
         diff = form_top - viewport_height // 4
         abs_diff = abs(diff)
-        if abs_diff > 400:
-            step = CFG["SCROLL_STEP"]["fine"][0]
-        elif abs_diff > 120:
-            step = CFG["SCROLL_STEP"]["fine"][1]
-        elif abs_diff > 40:
-            step = CFG["SCROLL_STEP"]["fine"][2]
+        if abs_diff > fine_steps[0]:
+            step = fine_steps[0]
+        elif abs_diff > fine_steps[1]:
+            step = fine_steps[1]
+        elif abs_diff > fine_steps[2]:
+            step = fine_steps[2]
         else:
-            step = CFG["SCROLL_STEP"]["fine"][3]
-        if step > 320:
-            step = 320
+            step = fine_steps[3]
+        if step > 150:
+            step = 150
 
-        if diff > 0:
-            new_y = scroll_y + step
-            delta = step
-        else:
-            new_y = scroll_y - step
-            delta = -step
+        delta = step if diff > 0 else -step
+        new_y = scroll_y + delta
         if _rnd.random() < 0.02:
             await drag_scroll(delta)
         else:
@@ -846,6 +848,20 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
             step,
         )
         await asyncio.sleep(0.06)
+
+        elapsed = asyncio.get_event_loop().time() - start_ts
+        logger.info(
+            "[SCROLL] iter %s/%s elapsed=%.2fs", i + 1, max_iters, elapsed
+        )
+        if elapsed > timeout:
+            break
+
+    b = await form.bounding_box()
+    if b:
+        form_top = b["y"]
+        viewport_height = await page.evaluate("window.innerHeight")
+        if not (0 <= form_top < viewport_height // 4):
+            await drag_scroll(form_top - viewport_height // 4)
 
 
 async def run_browser(ctx: RunContext):

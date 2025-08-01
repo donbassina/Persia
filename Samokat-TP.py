@@ -765,28 +765,31 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         form = await page.query_selector("div.form-wrapper")
         if form:
             bb = await form.bounding_box()
-            # если форма хотя-бы частично видна — стоп
-            if bb and 0 <= bb["y"] < viewport_h - 20:
-                return
-            # форма ушла выше — прокручиваем вверх
-            if bb and bb["y"] < 0:
-                await human_scroll(-100)
-                await asyncio.sleep(_rnd.uniform(0.6, 1.2))
-                continue
+            if bb:
+                # если форма уже видна — случайная точка «приземления» ±25 px
+                rand_pad = _rnd.randint(-25, 25)
+                if 0 <= bb["y"] + rand_pad < viewport_h // 3:
+                    return
+                # форма выше экрана — прокрутка вверх мелкими шагами
+                if bb["y"] < 0:
+                    await human_scroll(-60)
+                    await asyncio.sleep(_rnd.uniform(0.5, 1.0))
+                    continue
 
-        # «прогулочный» шаг вниз, точно как в emulate_user_reading
+        # расстояние до цели → динамический размер шага
         step = _rnd.choice([
-            _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
-            _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
+            _rnd.randint(160, 200) if bb and bb["y"] > 1000 else
+            _rnd.randint(100, 140) if bb and bb["y"] > 600 else
+            _rnd.randint(60,  90)  if bb and bb["y"] > 250 else
+            _rnd.randint(25,  45)
         ])
-        step = min(step, 200)
         await human_scroll(step)
-        logger.info(f"[SCROLL] to-form wheel down {step}")
-        await asyncio.sleep(_rnd.uniform(0.7, 1.7))
+        logger.info(f"[SCROLL] to-form wheel {step}")
+        await asyncio.sleep(_rnd.uniform(0.6, 1.4))
 
-        # таймаут, чтобы не висеть бесконечно
+        # защита от бесконечного цикла
         if asyncio.get_event_loop().time() - start > timeout:
-            logger.warning("scroll_to_form_like_reading: timeout, форма так и не появилась")
+            logger.warning("scroll_to_form_like_reading: timeout")
             return
 
 
@@ -1039,7 +1042,7 @@ if (window.WebGL2RenderingContext) {{
             # ====================================================================================
             # Быстрые крупные скроллы к форме, без телепортов
             # ====================================================================================
-            await smooth_scroll_to_form(page, ctx)
+            # await smooth_scroll_to_form(page, ctx)
 
             # ====================================================================================
             # Скроллим к форме теми же мелкими шагами, что и при «гулянии»

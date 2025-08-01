@@ -752,35 +752,39 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
 
 async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
     """
-    Плавный «человеческий» скролл к div.form-wrapper
-    ─ использует абсолютно те же шаги, задержки и wheel-scroll,
-      что и во время emulate_user_reading; никаких drag-scroll
-      или scrollIntoView.
+    Плавный «человеческий» скролл к div.form-wrapper.
+    Использует ровно те же wheel-scroll, шаги, задержки, что и в emulate_user_reading.
+    После выхода из функции должна быть видна хотя бы часть формы.
     """
+    import asyncio
+
     start = asyncio.get_event_loop().time()
     viewport_h = await page.evaluate("window.innerHeight")
+
     while True:
-        # форма уже видна? ─ останавливаемся
         form = await page.query_selector("div.form-wrapper")
         if form:
             bb = await form.bounding_box()
-            if bb and 0 <= bb["y"] < viewport_h // 4:
-                return  # цель достигнута
+            # если форма хотя-бы частично видна — стоп
+            if bb and 0 <= bb["y"] < viewport_h - 20:
+                return
+            # форма ушла выше — прокручиваем вверх
+            if bb and bb["y"] < 0:
+                await human_scroll(-100)
+                await asyncio.sleep(_rnd.uniform(0.6, 1.2))
+                continue
 
-        # используем те же «большие»/«средние» шаги, что и в emulate_user_reading
-        step = _rnd.choice(
-            [
-                _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
-                _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
-            ]
-        )
-        if step > 200:
-            step = 200
+        # «прогулочный» шаг вниз, точно как в emulate_user_reading
+        step = _rnd.choice([
+            _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
+            _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
+        ])
+        step = min(step, 200)
         await human_scroll(step)
         logger.info(f"[SCROLL] to-form wheel down {step}")
         await asyncio.sleep(_rnd.uniform(0.7, 1.7))
 
-        # ограничение по времени, чтобы не зациклиться
+        # таймаут, чтобы не висеть бесконечно
         if asyncio.get_event_loop().time() - start > timeout:
             logger.warning("scroll_to_form_like_reading: timeout, форма так и не появилась")
             return

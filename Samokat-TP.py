@@ -760,7 +760,7 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
 
     start = asyncio.get_event_loop().time()
     viewport_h = await page.evaluate("window.innerHeight")
-
+    bb = None  # форма может ещё не быть найдена — инициализируем
     while True:
         form = await page.query_selector("div.form-wrapper")
         if form:
@@ -777,12 +777,15 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
                     continue
 
         # расстояние до цели → динамический размер шага
-        step = _rnd.choice([
-            _rnd.randint(160, 200) if bb and bb["y"] > 1000 else
-            _rnd.randint(100, 140) if bb and bb["y"] > 600 else
-            _rnd.randint(60,  90)  if bb and bb["y"] > 250 else
-            _rnd.randint(25,  45)
-        ])
+        if bb:
+            step = _rnd.choice([
+                _rnd.randint(160, 200) if bb["y"] > 1000 else
+                _rnd.randint(100, 140) if bb["y"] > 600  else
+                _rnd.randint(60,  90)  if bb["y"] > 250  else
+                _rnd.randint(25,  45)
+            ])
+        else:
+            step = _rnd.randint(160, 200)  # форму ещё не нашли — крупные колёсики
         await human_scroll(step)
         logger.info(f"[SCROLL] to-form wheel {step}")
         await asyncio.sleep(_rnd.uniform(0.6, 1.4))

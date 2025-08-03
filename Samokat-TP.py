@@ -753,20 +753,17 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
 
 async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
     """
-    Плавный «человеческий» скролл к div.form-wrapper.
-
-    • Пока форму не нашли — широкие шаги 120-180 px.
-    • С появлением формы шаг уменьшается по мере приближения.
-    • Скролл останавливается, когда ВСЯ форма в окне и её верх
-      лежит в диапазоне 20-40 % высоты вьюпорта (рандом ±5 %).
-    • Если перелистнули — мелко крутим вверх.
+    Плавный человеческий скролл к div.form-wrapper без резких прыжков.
+    Шаги и паузы берём из CFG["SCROLL_STEP"] — те же, что при прогулке.
+    Выходим, когда top формы в диапазоне centre_zone (≈30–40 % vh ±20 px)
+    и bottom формы <= vh-10 px (форма целиком видна).
     """
     import asyncio
 
-    start   = asyncio.get_event_loop().time()
-    vph     = await page.evaluate("window.innerHeight")
-    bb      = None                                  # bounding-box формы
-    target  = _rnd.uniform(0.20, 0.40) * vph        # желаемый «уровень приземления»
+    start = asyncio.get_event_loop().time()
+    vh    = await page.evaluate("window.innerHeight")
+    centre_zone = (vh * 0.30, vh * 0.40)          # базовый центр
+    bb = None
 
     while True:
         form = await page.query_selector("div.form-wrapper")
@@ -775,33 +772,27 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
             if bb:
                 top, bottom = bb["y"], bb["y"] + bb["height"]
 
-                # --- условие завершения: форма целиком видна + верх в таргет-зоне
-                if (vph * 0.20 <= top <= vph * 0.40) and (bottom <= vph - 10):
+                # цель достигнута ─ форма целиком видна, верх почти по центру
+                if centre_zone[0] - 20 <= top <= centre_zone[1] + 20 and bottom <= vh - 10:
                     return
 
-                # --- перелистнули выше: аккуратно крутим назад
+                # перелистнули форму выше окна → скроллим вверх короткими шагами
                 if top < 0:
-                    await human_scroll(-_rnd.randint(45, 65))
-                    await asyncio.sleep(_rnd.uniform(0.4, 0.9))
+                    await human_scroll(-_rnd.randint(40, 60))
+                    await asyncio.sleep(_rnd.uniform(0.5, 1.0))
                     continue
 
-        # --- выбираем шаг прокрутки ---
-        if bb:
-            dist = bb["y"] - target
-            step = (
-                _rnd.randint(120, 160) if dist > 900 else
-                _rnd.randint(80, 120)  if dist > 500 else
-                _rnd.randint(45, 70)   if dist > 120 else
-                _rnd.randint(25, 45)
-            )
-        else:
-            step = _rnd.randint(120, 180)           # форму ещё не видим
+        # -------- выбираем «прогулочный» шаг вниз --------
+        step = _rnd.choice([
+            _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
+            _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
+        ])
 
         await human_scroll(step)
         logger.info(f"[SCROLL] to-form wheel {step}")
-        await asyncio.sleep(_rnd.uniform(0.6, 1.3))
+        await asyncio.sleep(_rnd.uniform(0.7, 1.4))
 
-        # --- защита от зависания ---
+        # защита от зависания
         if asyncio.get_event_loop().time() - start > timeout:
             logger.warning("scroll_to_form_like_reading: timeout")
             return

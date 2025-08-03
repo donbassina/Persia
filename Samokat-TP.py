@@ -752,47 +752,31 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
 
 
 async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
+    """Smooth human-like scroll positioning the form within the viewport.
+
+    The page is scrolled using ``human_scroll`` with the same random
+    step logic as in ``emulate_user_reading``. After every move the form's
+    bounding box is checked:
+
+    * the top edge must be in the 30–40% viewport zone (±20 px)
+    * the entire form must be visible (``bottom <= vh - 10``)
+
+    Overshooting triggers short upward scrolls. The function exits once
+    the form is positioned correctly or when ``timeout`` seconds elapse,
+    logging a warning in the latter case.
     """
-    Плавный «человеческий» докрут до формы и точное позиционирование.
-
-    Логика:
-    ▸ Сначала вычисляем bbox формы (как в старом скрипте).
-    ▸ Двигаемся к форме ТЕМ ЖЕ шагами, задержками и random-логикой,
-      которые использует emulate_user_reading:
-        step = _rnd.randint(CFG["SCROLL_STEP"]["down1"], CFG["SCROLL_STEP"]["down2"])
-        await page.mouse.wheel(0, step)
-        await asyncio.sleep(_rnd.uniform(0.12, 0.25))
-    ▸ После каждого шага проверяем bbox:
-        * форма должна быть полностью видна (bottom ≤ vh-10)
-        * top формы должен попасть в диапазон centre_lo≤top≤centre_hi,
-          где centre_lo = vh*0.30 – 20, centre_hi = vh*0.40 + 20
-    ▸ Если top < centre_lo → wheel-up на 40-60 px.
-    ▸ Как только все условия выполнены → break и короткая пауза 0.15-0.35 s.
-    ▸ Общий timeout 15 s, иначе logger.warning и выход.
-
-    Изменять НИЧЕГО, кроме этой функции, НЕЛЬЗЯ!
-    """
-    import asyncio
-    import time
-
-    CFG = ctx.CFG
-    logger = ctx.logger
-    _rnd = ctx._rnd
+    del ctx
 
     sel = CFG["SELECTORS"]["FORM_WRAPPER"]
-    down_min = CFG["SCROLL_STEP"]["down1"]
-    down_max = CFG["SCROLL_STEP"]["down2"]
-
     vh = await page.evaluate("window.innerHeight")
-    centre_lo_px = vh * 0.30
-    centre_hi_px = vh * 0.40
-    offset = 20
-
+    centre_lo = vh * 0.30 - 20
+    centre_hi = vh * 0.40 + 20
     start = time.time()
+
     while True:
         if time.time() - start > timeout:
             logger.warning("[WARN] scroll_to_form_like_reading: timeout 15 s")
-            break
+            return
 
         form = await page.query_selector(sel)
         if not form:
@@ -806,18 +790,22 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         top = box["y"]
         bottom = box["y"] + box["height"]
 
-        # Условия «форма в зоне»
-        if centre_lo_px - offset <= top <= centre_hi_px + offset and bottom <= vh - 10:
+        if centre_lo <= top <= centre_hi and bottom <= vh - 10:
             await asyncio.sleep(_rnd.uniform(0.15, 0.35))
-            break
+            return
 
-        # Решаем направление скролла
-        if top < centre_lo_px - offset:
-            step = _rnd.randint(40, 60)  # вверх
-            await page.mouse.wheel(0, -step)
+        if top < centre_lo:
+            step = _rnd.randint(40, 60)
+            await human_scroll(-step)
         else:
-            step = _rnd.randint(down_min, down_max)  # вниз
-            await page.mouse.wheel(0, step)
+            step = _rnd.choice(
+                [
+                    _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
+                    _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
+                ]
+            )
+            step = min(step, 200)
+            await human_scroll(step)
 
         await asyncio.sleep(_rnd.uniform(0.12, 0.25))
 

@@ -24,7 +24,6 @@ SCHEMA: dict[str, tuple[type, Any]] = {
     "HUMAN_DELAY_σ": (float, lambda v: isinstance(v, (int, float)) and v > 0),
     "TYPO_PROB": (float, lambda v: isinstance(v, (int, float)) and 0 <= v <= 0.3),
     "SCROLL_STEP": (dict, None),
-    "SCROLL_TO_FORM": (dict, None),
     "RUN_TIMEOUT": (int, lambda v: isinstance(v, int) and 30 <= v <= 600),
 }
 
@@ -55,39 +54,6 @@ def _check_scroll_step(v: Any) -> bool:
 
 
 SCHEMA["SCROLL_STEP"] = (dict, _check_scroll_step)
-
-
-def _check_scroll_to_form(v: Any) -> bool:
-    """Return True if ``v`` is a valid SCROLL_TO_FORM dict."""
-    if not isinstance(v, dict):
-        return False
-    required = {"TIMEOUT", "BLOCK_PAUSE", "FINE_STEPS", "MAX_ITERS"}
-    if not required.issubset(v.keys()):
-        return False
-    if not isinstance(v["TIMEOUT"], (int, float)) or v["TIMEOUT"] <= 0:
-        return False
-    if not (
-        isinstance(v["MAX_ITERS"], int) and v["MAX_ITERS"] > 0
-    ):
-        return False
-    bp = v["BLOCK_PAUSE"]
-    if not (
-        isinstance(bp, list)
-        and len(bp) == 2
-        and all(isinstance(x, (int, float)) and x >= 0 for x in bp)
-        and bp[0] <= bp[1]
-    ):
-        return False
-    fs = v["FINE_STEPS"]
-    if not (
-        isinstance(fs, list)
-        and len(fs) == 4
-        and all(isinstance(x, int) and x > 0 for x in fs)
-    ):
-        return False
-    return True
-
-SCHEMA["SCROLL_TO_FORM"] = (dict, _check_scroll_to_form)
 
 CFG: dict[str, Any] = {}
 

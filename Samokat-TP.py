@@ -15,6 +15,7 @@ import logging
 import requests
 
 from python_ghost_cursor.playwright_async import create_cursor
+from python_ghost_cursor.playwright_async._spoof import GhostCursor
 from playwright.async_api import async_playwright
 from playwright_stealth import stealth
 
@@ -45,10 +46,104 @@ logger = get_logger("samokat.main")
 
 _rnd = SystemRandom()  # единый генератор на весь скрипт
 
+# global ghost-cursor instance, created in run_browser
+GCURSOR: GhostCursor | None = None
+
 # selectors loaded from YAML profile in ``main``
 # default profile path: selectors/default.yml
 selectors: dict | None = None
 proxy_cfg: dict | None = None
+
+
+async def gc_move(x: float, y: float):
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    await GCURSOR.move_to({"x": x, "y": y})
+
+
+async def gc_click(target):
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    page = GCURSOR.page
+    el = None
+    if isinstance(target, str):
+        el = await page.query_selector(target)
+    else:
+        el = target
+    box = await el.bounding_box() if el else None
+    if box:
+        x = box["x"] + box["width"] / 2
+        y = box["y"] + box["height"] / 2
+        await gc_move(x, y)
+        if hasattr(GCURSOR, "click_absolute"):
+            await GCURSOR.click_absolute(x, y)
+        else:
+            await GCURSOR.click(None)
+        return
+    await GCURSOR.click(target if isinstance(target, str) else None)
+
+
+async def gc_wheel(delta_y: float):
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    if not hasattr(GCURSOR, "wheel"):
+        raise RuntimeError("GCURSOR lacks wheel method")
+    await GCURSOR.wheel(0, delta_y)
+
+
+async def gc_press():
+    if GCURSOR is None:
+        return
+    await GCURSOR.page.mouse.down()
+
+
+async def gc_release():
+    if GCURSOR is None:
+        return
+    await GCURSOR.page.mouse.up()
+
+
+async def human_scroll(total_px: int):
+    """Scroll page in a human-like manner using the mouse wheel."""
+    direction = 1 if total_px > 0 else -1
+    remain = abs(total_px)
+    while remain > 0:
+        step = min(int(_rnd.lognormvariate(3.9, 0.45)), remain, 200)
+        await gc_wheel(direction * step + _rnd.randint(-0, 0))
+        v = step
+        while v > 3:
+            await gc_wheel(direction * int(v))
+            v *= 0.75
+            await asyncio.sleep(0.016)
+        remain -= step
+        if _rnd.random() < 0.14:
+            await gc_wheel(-direction * _rnd.randint(0, 0))
+        if _rnd.random() < 0.35:
+            await asyncio.sleep(_rnd.uniform(1.25, 4.9))
+
+
+async def drag_scroll(total_px: int):
+    """Simulate scrollbar drag for scrolling."""
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    page = GCURSOR.page
+    scroll_height = await page.evaluate("document.body.scrollHeight")
+    viewport_height = await page.evaluate("window.innerHeight")
+    if scroll_height <= viewport_height:
+        return
+    scroll_y = await page.evaluate("window.scrollY")
+    max_scroll = scroll_height - viewport_height
+    new_scroll = max(0, min(scroll_y + total_px, max_scroll))
+    slider_h = viewport_height * viewport_height / scroll_height
+    track_h = viewport_height - slider_h
+    start_y = scroll_y / max_scroll * track_h + slider_h / 2
+    end_y = new_scroll / max_scroll * track_h + slider_h / 2
+    x = await page.evaluate("window.innerWidth - 4")
+    await gc_move(x, start_y)
+    await gc_press()
+    await gc_move(x, end_y)
+    await gc_release()
+    await asyncio.sleep(_rnd.uniform(0.1, 0.3))
 
 
 def _to_bool(val: str | bool) -> bool:
@@ -361,7 +456,8 @@ async def fill_full_name(page, name, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["name"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
+            await page.wait_for_timeout(50)
             await page.wait_for_timeout(100)
             await input_box.fill("")
             await human_type(page, selectors["form"]["name"], name, ctx)
@@ -380,7 +476,7 @@ async def fill_city(page, city, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["city"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
             item_sel = selectors["form"]["city_item"]
             await page.locator(item_sel).get_by_text(city, exact=True).click()
             return True
@@ -395,7 +491,8 @@ async def fill_phone(page, phone, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["phone"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
+            await page.wait_for_timeout(50)
             await page.wait_for_timeout(100)
             await input_box.fill("")
             await human_type(page, selectors["form"]["phone"], phone, ctx)
@@ -414,7 +511,7 @@ async def fill_gender(page, gender, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["gender"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
             item_sel = selectors["form"]["gender_item"]
             await page.locator(item_sel).get_by_text(gender, exact=True).click()
             return True
@@ -429,7 +526,8 @@ async def fill_age(page, age, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["age"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
+            await page.wait_for_timeout(50)
             await page.wait_for_timeout(100)
             await input_box.fill("")
             await human_type(page, selectors["form"]["age"], age, ctx)
@@ -448,7 +546,7 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
         try:
             input_box = page.locator(selectors["form"]["courier"])
             await human_move_cursor(page, input_box, ctx)
-            await input_box.click()
+            await ghost_click(input_box)
             item_sel = selectors["form"]["courier_item"]
             await page.locator(item_sel).get_by_text(courier_type, exact=True).click()
             return True
@@ -465,7 +563,7 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
 async def fill_policy_checkbox(page, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            await page.locator(selectors["form"]["policy"]).click()
+            await ghost_click(page.locator(selectors["form"]["policy"]))
             return True
         except Exception as e:
             logger.warning(
@@ -485,7 +583,7 @@ async def submit_form(page, ctx: RunContext):
         if display == "none":
             await page.locator("form").evaluate("f => f.submit()")
         else:
-            await btn.click()
+            await ghost_click(btn)
     except Exception as e:
         logger.error("submit_form failed: %s", e)
         raise
@@ -515,6 +613,34 @@ async def human_type_city_autocomplete(page, selector: str, text: str, ctx: RunC
     logger.info(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}')
 
 
+async def ghost_click(selector_or_element):
+    """Click element using ghost cursor with logging."""
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    page = GCURSOR.page
+    el = None
+    if isinstance(selector_or_element, str):
+        el = await page.query_selector(selector_or_element)
+    else:
+        el = selector_or_element
+    box = await el.bounding_box() if el else None
+    if box:
+        name = (
+            await el.get_attribute("name")
+            or await el.get_attribute("placeholder")
+            or await el.evaluate("el => el.className")
+            or (
+                selector_or_element
+                if isinstance(selector_or_element, str)
+                else "element"
+            )
+        )
+        logger.info(
+            f"[INFO] Курсор к {name} ({int(box['x']+box['width']/2)},{int(box['y']+box['height']/2)})"
+        )
+    await gc_click(selector_or_element)
+
+
 async def human_move_cursor(page, el, ctx: RunContext):
     """Плавно ведёт курсор к случайной точке внутри элемента ``el``."""
     b = await el.bounding_box()
@@ -523,11 +649,9 @@ async def human_move_cursor(page, el, ctx: RunContext):
     target_x = b["x"] + _rnd.uniform(8, b["width"] - 8)
     target_y = b["y"] + _rnd.uniform(8, b["height"] - 8)
 
-    try:
-        cur = page.mouse.position  # старые версии Playwright
-    except AttributeError:
-        # сохраняем позицию сами
-        cur = getattr(ctx, "mouse_pos", (0, 0))
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+    cur = getattr(ctx, "mouse_pos", (0, 0))
     pivots = []
     if _rnd.random() < 0.7:
         pivots.append(
@@ -539,12 +663,12 @@ async def human_move_cursor(page, el, ctx: RunContext):
     pivots.append((target_x, target_y))
     cur_x, cur_y = cur
     for x, y in pivots:
-        await page.mouse.move(x, y, steps=_rnd.randint(8, 20))
+        await gc_move(x, y)
         ctx.mouse_pos = (x, y)
         cur_x, cur_y = x, y
     final_x = cur_x + _rnd.uniform(-4, 4)
     final_y = cur_y + _rnd.uniform(-3, 3)
-    await page.mouse.move(final_x, final_y, steps=3)
+    await gc_move(final_x, final_y)
     cur_x, cur_y = final_x, final_y
     ctx.mouse_pos = (cur_x, cur_y)
     sel = (
@@ -575,21 +699,25 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                     _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
                 ]
             )
+            if step > 200:
+                step = 200
             current_y = min(current_y + step, height - 1)
-            if step >= 400:
-                parts = _rnd.randint(3, 6)
-                for _ in range(parts):
-                    await page.mouse.wheel(0, step / parts)
-                    await asyncio.sleep(_rnd.uniform(0.06, 0.12))
+            if _rnd.random() < 0.005:
+                await drag_scroll(step)
             else:
-                await page.mouse.wheel(0, step)
-            logger.info(f"[INFO] wheel вниз на {step}")
+                await human_scroll(step)
+            logger.info(f"[SCROLL] wheel down {step}")
             await asyncio.sleep(_rnd.uniform(0.7, 1.7))
         elif action == "scroll_up":
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
+            if step > 320:
+                step = 320
             current_y = max(current_y - step, 0)
-            await page.mouse.wheel(0, -step)
-            logger.info(f"[INFO] wheel вверх на {step}")
+            if _rnd.random() < 0.005:
+                await drag_scroll(-step)
+            else:
+                await human_scroll(-step)
+            logger.info(f"[SCROLL] wheel up {step}")
             await asyncio.sleep(_rnd.uniform(0.5, 1.1))
         elif action == "pause":
             t = _rnd.uniform(1.2, 3.8)
@@ -600,9 +728,9 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             y = _rnd.randint(100, 680)
             dx = _rnd.randint(-10, 10)
             dy = _rnd.randint(-8, 8)
-            await page.mouse.move(x, y, steps=_rnd.randint(4, 10))
+            await gc_move(x, y)
             await asyncio.sleep(_rnd.uniform(0.08, 0.18))
-            await page.mouse.move(x + dx, y + dy, steps=2)
+            await gc_move(x + dx, y + dy)
             logger.info(f"[INFO] Мышь дрожит ({x},{y})")
             await asyncio.sleep(_rnd.uniform(0.10, 0.22))
         else:
@@ -613,7 +741,7 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                 if box:
                     x = box["x"] + _rnd.uniform(12, box["width"] - 12)
                     y = box["y"] + _rnd.uniform(12, box["height"] - 12)
-                    await page.mouse.move(x, y, steps=_rnd.randint(10, 22))
+                    await gc_move(x, y)
                     logger.info(f"[INFO] Мышь на {sel} ({int(x)},{int(y)})")
                     await asyncio.sleep(_rnd.uniform(0.4, 1.3))
 
@@ -663,14 +791,13 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
             )
         else:
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
+        if step > 320:
+            step = 320
         new_y = scroll_y + direction * step
-        if step >= 400:
-            parts = _rnd.randint(3, 6)
-            for _ in range(parts):
-                await page.mouse.wheel(0, direction * step / parts)
-                await asyncio.sleep(_rnd.uniform(0.06, 0.12))
+        if _rnd.random() < 0.02:
+            await drag_scroll(direction * step)
         else:
-            await page.mouse.wheel(0, direction * step)
+            await human_scroll(direction * step)
         logger.info(f"[SCROLL] wheel {'down' if direction>0 else 'up'} {step}")
 
         # Остановки возле блоков с текстом
@@ -680,12 +807,12 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
             if el:
                 b2 = await el.bounding_box()
                 if b2 and abs(b2["y"] - new_y) < 60:
-                    pause_t = _rnd.uniform(1.2, 3.2)
+                    pause_t = _rnd.uniform(1.2, 4.2)
                     logger.info(f"[INFO] Пауза у блока {sel} {pause_t:.1f} сек")
                     await asyncio.sleep(pause_t)
                     break
 
-        await asyncio.sleep(_rnd.uniform(0.8, 2.1))
+        await asyncio.sleep(_rnd.uniform(3.8, 5.1))
 
         # Дальше стандартные шаги
         diff = form_top - viewport_height // 4
@@ -698,6 +825,8 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
             step = CFG["SCROLL_STEP"]["fine"][2]
         else:
             step = CFG["SCROLL_STEP"]["fine"][3]
+        if step > 320:
+            step = 320
 
         if diff > 0:
             new_y = scroll_y + step
@@ -705,13 +834,10 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
         else:
             new_y = scroll_y - step
             delta = -step
-        if abs(delta) >= 400:
-            parts = _rnd.randint(3, 6)
-            for _ in range(parts):
-                await page.mouse.wheel(0, delta / parts)
-                await asyncio.sleep(_rnd.uniform(0.06, 0.12))
+        if _rnd.random() < 0.02:
+            await drag_scroll(delta)
         else:
-            await page.mouse.wheel(0, delta)
+            await human_scroll(delta)
         logger.info(
             "[SCROLL] wheel small: scroll_y=%s → %s, form_top=%s, step=%s",
             scroll_y,
@@ -786,7 +912,15 @@ if (window.WebGL2RenderingContext) {{
         )
         logger.info("[INFO] Patched WebGL2 getParameter")
         page = await context.new_page()
-        _ = create_cursor(page)  # вызываем ради побочных эффектов
+        global GCURSOR
+        GCURSOR = create_cursor(page)
+        if not hasattr(GCURSOR, "wheel"):
+
+            async def _wheel(dx: float, dy: float):
+                m = getattr(page, "mouse")
+                await m.wheel(dx, dy)
+
+            GCURSOR.wheel = _wheel  # type: ignore[attr-defined]
 
         async def _abort(route):
             await should_abort(route, ctx)
@@ -840,7 +974,7 @@ if (window.WebGL2RenderingContext) {{
             load_sec = max(load_ms / 1000, 0)
 
             min_read = 1.5  # минимум «чтения», сек
-            base_read = _rnd.uniform(10, 25)
+            base_read = _rnd.uniform(2, 6)
             total_time = max(min_read, base_read - max(0, 7 - load_sec))
 
             logger.info(f"[INFO] Имитация “чтения” лендинга: {total_time:.1f} сек")

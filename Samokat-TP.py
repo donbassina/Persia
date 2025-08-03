@@ -775,8 +775,9 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
     import asyncio
     import time
 
-    CFG = ctx.CFG
     logger = ctx.logger
+    from samokat_config import CFG
+
     _rnd = ctx._rnd
 
     sel = CFG["SELECTORS"]["FORM_WRAPPER"]

@@ -747,14 +747,15 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
 
 
 async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
-    """Scroll the page to position the form in the center zone.
+    """Center the form on screen using human-like wheel scrolling.
 
-    The function mimics a human reading the page. The top of the form
-    (``CFG["SELECTORS"]["FORM_WRAPPER"]``) is scrolled into the 30–40% zone of
-    the viewport height (±20 px). The form must be fully visible unless it is
-    taller than the viewport. Small upward wheel steps (40–60 px) correct
-    overscroll. After a successful position is reached, a short extra wheel
-    scroll is performed to damp Playwright's autoscroll.
+    The midpoint of the form (``CFG["SELECTORS"]["FORM_WRAPPER"]``) is aligned
+    with the center of the viewport. The algorithm uses fixed wheel steps of
+    300/100/40 px depending on the distance to the center (``>400``, ``>120``,
+    ``>40``). Scrolling stops once the midpoint of the form is within ±40 px of
+    the screen center or after ``timeout`` seconds. After reaching the target
+    position a small extra downward scroll (20–40 px) and short pause are
+    applied to counter Playwright's autoscroll.
 
     Parameters
     ----------
@@ -773,7 +774,6 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         return
 
     start = asyncio.get_event_loop().time()
-    offset = 20
     while asyncio.get_event_loop().time() - start < timeout:
         box = await form.bounding_box()
         if not box:
@@ -781,50 +781,35 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
             return
 
         vh = await page.evaluate("window.innerHeight")
-        top = box["y"]
-        bottom = box["y"] + box["height"]
-        centre_lo_px = vh * 0.30
-        centre_hi_px = vh * 0.40
-        zone_min = centre_lo_px - offset
-        zone_max = centre_hi_px + offset
+        center_screen = vh / 2
+        center_form = box["y"] + box["height"] / 2
+        diff = center_form - center_screen
 
-        in_centre = zone_min <= top <= zone_max
-        fully_visible = bottom <= vh - 10
-        too_tall = box["height"] > vh
-
-        if in_centre and (fully_visible or too_tall):
+        if abs(diff) <= 40:
             logger.info(
-                "[SCROLL] Форма в зоне: top=%s, bottom=%s, vh=%s",
-                top,
-                bottom,
-                vh,
+                "[SCROLL] Форма в центре: form_center=%s, screen_center=%s",
+                int(center_form),
+                int(center_screen),
             )
-            # небольшой wheel-докрут 20-40 px вниз и короткая пауза
-            await page.mouse.wheel(0, _rnd.randint(20, 40))
+            await human_scroll(_rnd.randint(20, 40))
             await asyncio.sleep(_rnd.uniform(0.3, 0.6))
             break
 
-        if top < zone_min:
-            step = _rnd.randint(40, 60)
-            await human_scroll(-step)
-            logger.info(f"[SCROLL] wheel up {step}")
-            await asyncio.sleep(_rnd.uniform(0.5, 1.1))
+        abs_diff = abs(diff)
+        if abs_diff > 400:
+            step = 300
+        elif abs_diff > 120:
+            step = 100
+        elif abs_diff > 40:
+            step = 40
         else:
-            step = _rnd.choice(
-                [
-                    _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
-                    _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
-                ]
-            )
-            if step > 200:
-                step = 200
-            await human_scroll(step)
-            logger.info(f"[SCROLL] wheel down {step}")
-            await asyncio.sleep(_rnd.uniform(0.7, 1.7))
-            if _rnd.random() < 0.20:
-                pause_t = _rnd.uniform(1.2, 3.8)
-                logger.info(f"[INFO] Пауза {pause_t:.1f}")
-                await asyncio.sleep(pause_t)
+            break
+
+        step = step if diff > 0 else -step
+        await human_scroll(step)
+        logger.info(f"[SCROLL] wheel {'down' if step>0 else 'up'} {abs(step)}")
+
+        await asyncio.sleep(_rnd.uniform(0.4, 1.2))
 
     else:
         logger.warning("[WARN] Не удалось докрутить форму за %s сек", timeout)

@@ -747,14 +747,14 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
 
 
 async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
-    """Scroll to the form using human-like wheel steps.
+    """Scroll the page to position the form in the center zone.
 
-    The page is scrolled similarly to :func:`emulate_user_reading` so that
-    the top of the form (``CFG["SELECTORS"]["FORM_WRAPPER"]``) ends up in
-    the 30–40% zone of the viewport height (±20 px) while the form remains
-    fully visible (its bottom is not lower than ``vh - 10``). If the form is
-    overscrolled, small upward steps (40–60 px) are used to correct the
-    position. The function stops after *timeout* seconds if positioning fails.
+    The function mimics a human reading the page. The top of the form
+    (``CFG["SELECTORS"]["FORM_WRAPPER"]``) is scrolled into the 30–40% zone of
+    the viewport height (±20 px). The form must be fully visible unless it is
+    taller than the viewport. Small upward wheel steps (40–60 px) correct
+    overscroll. After a successful position is reached, a short extra wheel
+    scroll is performed to damp Playwright's autoscroll.
 
     Parameters
     ----------
@@ -766,13 +766,14 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         Maximum time to attempt scrolling, defaults to 15 seconds.
     """
 
-    sel = CFG["SELECTORS"]["FORM_WRAPPER"]
+    sel = CFG.get("SELECTORS", {}).get("FORM_WRAPPER", "div.form-wrapper")
     form = await page.query_selector(sel)
     if not form:
         logger.warning("%s не найден", sel)
         return
 
     start = asyncio.get_event_loop().time()
+    offset = 20
     while asyncio.get_event_loop().time() - start < timeout:
         box = await form.bounding_box()
         if not box:
@@ -782,17 +783,26 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         vh = await page.evaluate("window.innerHeight")
         top = box["y"]
         bottom = box["y"] + box["height"]
-        zone_min = vh * 0.30 - 20
-        zone_max = vh * 0.40 + 20
+        centre_lo_px = vh * 0.30
+        centre_hi_px = vh * 0.40
+        zone_min = centre_lo_px - offset
+        zone_max = centre_hi_px + offset
 
-        if zone_min <= top <= zone_max and bottom <= vh - 10:
+        in_centre = zone_min <= top <= zone_max
+        fully_visible = bottom <= vh - 10
+        too_tall = box["height"] > vh
+
+        if in_centre and (fully_visible or too_tall):
             logger.info(
                 "[SCROLL] Форма в зоне: top=%s, bottom=%s, vh=%s",
                 top,
                 bottom,
                 vh,
             )
-            return
+            # небольшой wheel-докрут 20-40 px вниз и короткая пауза
+            await page.mouse.wheel(0, _rnd.randint(20, 40))
+            await asyncio.sleep(_rnd.uniform(0.3, 0.6))
+            break
 
         if top < zone_min:
             step = _rnd.randint(40, 60)
@@ -816,7 +826,8 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
                 logger.info(f"[INFO] Пауза {pause_t:.1f}")
                 await asyncio.sleep(pause_t)
 
-    logger.warning("[WARN] Не удалось докрутить форму за %s сек", timeout)
+    else:
+        logger.warning("[WARN] Не удалось докрутить форму за %s сек", timeout)
 
 
 

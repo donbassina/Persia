@@ -472,18 +472,62 @@ async def fill_full_name(page, name, ctx: RunContext, retries=3):
 
 
 async def fill_city(page, city, ctx: RunContext, retries=3):
+    item_sel = selectors["form"]["city_item"]
+    list_sel = selectors["form"].get("city_list", item_sel)
+    min_chars = (len(city) * 75 + 99) // 100
     for attempt in range(retries):
         try:
             input_box = page.locator(selectors["form"]["city"])
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            item_sel = selectors["form"]["city_item"]
-            await page.locator(item_sel).get_by_text(city, exact=True).click()
-            return True
+            await page.wait_for_timeout(50)
+            await page.wait_for_timeout(100)
+            await input_box.fill("")
+            typed = ""
+            prev_first = ""
+            for ch in city:
+                await human_type_city_autocomplete(
+                    page, selectors["form"]["city"], ch, ctx
+                )
+                typed += ch
+                list_locator = page.locator(list_sel)
+                updated = False
+                for _ in range(20):
+                    count = await list_locator.count()
+                    if count > 0:
+                        first = (await list_locator.nth(0).inner_text()).strip()
+                        if first != prev_first:
+                            updated = True
+                            break
+                    await asyncio.sleep(0.05)
+                if not updated:
+                    raise ValueError("city list not updated")
+                prev_first = first
+                items = []
+                for i in range(count):
+                    txt = (await list_locator.nth(i).inner_text()).strip()
+                    if txt:
+                        items.append(txt)
+                if len(typed) >= min_chars and len(items) <= 2 and city in items:
+                    target = page.locator(item_sel).get_by_text(city, exact=True)
+                    await human_move_cursor(page, target, ctx)
+                    await ghost_click(target)
+                    value = (await input_box.input_value()).strip()
+                    if value == city.strip():
+                        return True
+                    raise ValueError("field value mismatch")
+            target = page.locator(item_sel).get_by_text(city, exact=True)
+            if await target.count() > 0:
+                await human_move_cursor(page, target, ctx)
+                await ghost_click(target)
+                value = (await input_box.input_value()).strip()
+                if value == city.strip():
+                    return True
+            raise ValueError("city not found in suggestions")
         except Exception as e:
             logger.warning("fill_city attempt %s failed: %s", attempt + 1, e)
     logger.error("Не удалось выбрать город")
-    return False
+    raise ValueError("Не удалось выбрать город")
 
 
 async def fill_phone(page, phone, ctx: RunContext, retries=3):

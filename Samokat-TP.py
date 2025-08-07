@@ -472,72 +472,18 @@ async def fill_full_name(page, name, ctx: RunContext, retries=3):
 
 
 async def fill_city(page, city, ctx: RunContext, retries=3):
-    list_sel = selectors["form"].get("city_list", selectors["form"]["city_item"])
     for attempt in range(retries):
         try:
             input_box = page.locator(selectors["form"]["city"])
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            await page.wait_for_timeout(50)
-            await page.wait_for_timeout(100)
-            await input_box.fill("")
-
-            list_locator = page.locator(list_sel)
-            prev_first = ""
-            target_len = (len(city) * 3 + 3) // 4
-            typed = ""
-
-            for char in city:
-                await human_type_city_autocomplete(
-                    page, selectors["form"]["city"], char, ctx
-                )
-                typed += char
-
-                for _ in range(40):
-                    count = await list_locator.count()
-                    if count == 0:
-                        await page.wait_for_timeout(50)
-                        continue
-                    first_text = await list_locator.nth(0).inner_text()
-                    if first_text != prev_first:
-                        break
-                    await page.wait_for_timeout(50)
-                else:
-                    raise ValueError("Список городов не обновился")
-
-                if count == 0:
-                    raise ValueError("Список городов не найден")
-
-                prev_first = first_text
-
-                if len(typed) >= target_len:
-                    options = [t.strip() for t in await list_locator.all_inner_texts()]
-                    if city in options and 1 <= len(options) <= 2:
-                        idx = options.index(city)
-                        item = list_locator.nth(idx)
-                        await human_move_cursor(page, item, ctx)
-                        await ghost_click(item)
-                        await page.wait_for_timeout(100)
-                        value = await input_box.input_value()
-                        if value.strip() == city.strip():
-                            return True
-                        raise ValueError("Поле города заполнено неверно")
-
-            options = [t.strip() for t in await list_locator.all_inner_texts()]
-            if city in options:
-                idx = options.index(city)
-                item = list_locator.nth(idx)
-                await human_move_cursor(page, item, ctx)
-                await ghost_click(item)
-                await page.wait_for_timeout(100)
-                value = await input_box.input_value()
-                if value.strip() == city.strip():
-                    return True
-            raise ValueError(f"Город {city} не найден в списке")
+            item_sel = selectors["form"]["city_item"]
+            await page.locator(item_sel).get_by_text(city, exact=True).click()
+            return True
         except Exception as e:
             logger.warning("fill_city attempt %s failed: %s", attempt + 1, e)
     logger.error("Не удалось выбрать город")
-    raise ValueError("fill_city failed")
+    return False
 
 
 async def fill_phone(page, phone, ctx: RunContext, retries=3):
@@ -800,74 +746,180 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                     await asyncio.sleep(_rnd.uniform(0.4, 1.3))
 
 
+
+
+
+
+
+
+
+
+# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
+# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
+# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
+
+
+
+
+
+
+
+
+
+
+
 async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
-    """Scroll to the form using wheel actions that mimic a reader.
-
-    The form's top is positioned around one third of the viewport height and the
-    element is fully visible. The procedure reuses scrolling steps and pauses
-    from :func:`emulate_user_reading` and stops on success or after ``timeout``
-    seconds.
     """
+    Быстро прокручивает страницу так, чтобы центр формы оказался в центре экрана,
+    с разбросом ±70 px (рандомно на каждый запуск).
+    """
+    import asyncio, random
 
-    sel = CFG.get("SELECTORS", {}).get("FORM_WRAPPER", "div.form-wrapper")
+    sel = (
+        (selectors or {}).get("form", {}).get("wrapper")
+        or CFG.get("SELECTORS", {}).get("FORM_WRAPPER")
+        or "div.form-wrapper"
+    )
     form = await page.query_selector(sel)
     if not form:
-        logger.warning("%s не найден", sel)
+        logger.warning("[WARN] scroll_to_form_like_reading: форма %s не найдена", sel)
         return
 
-    start = asyncio.get_event_loop().time()
-    while asyncio.get_event_loop().time() - start < timeout:
-        box = await form.bounding_box()
-        if not box:
-            logger.warning("Не удалось получить bounding_box формы")
-            return
+    vh = await page.evaluate("window.innerHeight")
+    box = await form.bounding_box()
+    if not box:
+        logger.warning("[WARN] scroll_to_form_like_reading: bounding_box пуст")
+        return
 
-        scroll_y, vh = await page.evaluate("[window.scrollY, window.innerHeight]")
-        top = box["y"] - scroll_y
-        bottom = top + box["height"]
-        zone_min = vh * 0.30 - 20
-        zone_max = vh * 0.40 + 20
-        top_in_zone = zone_min <= top <= zone_max
-        form_tall = box["height"] >= vh
-        bottom_visible = form_tall or bottom <= vh - 10
+    form_center = box["y"] + box["height"] / 2
+    current_scroll = await page.evaluate(
+        "document.scrollingElement.scrollTop || window.scrollY"
+    )
+    viewport_center = current_scroll + vh / 2
+    distance = abs(form_center - viewport_center)
+    logger.info(
+        f"[SCROLL] scrollTop={current_scroll:.0f}, form_center={form_center:.0f}, "
+        f"distance={distance:.0f}px"
+    )
 
-        if top_in_zone and bottom_visible:
-            pause = _rnd.uniform(0.15, 0.35)
-            logger.info(f"[INFO] Пауза {pause:.2f}")
-            await asyncio.sleep(pause)
+
+    
+
+
+    # === ФИНАЛЬНЫЙ СКРОЛ К ФОРМЕ ================
+    logger.info("[SCROLL] ► final-jump started")
+
+    # положение формы и фикс-хедера
+    rect = await form.evaluate("el => el.getBoundingClientRect()")
+    form_view_center = rect["top"] + rect["height"] / 2
+    header_h = await page.evaluate("""
+        (() => {
+            const el = [...document.querySelectorAll('*')].find(e=>{
+                const s = getComputedStyle(e);
+                return s.position==='fixed'
+                       && parseInt(s.top||0)===0
+                       && e.offsetHeight>40 && e.offsetHeight<200;
+            });
+            return el ? el.offsetHeight : 0;
+        })()
+    """)
+
+    target_center  = vh / 2 - header_h + _rnd.randint(0, 60)
+    remaining      = form_view_center - target_center
+    distance       = abs(remaining)
+    prev_sign      = 1 if remaining > 0 else -1   # знак «до/после»
+
+    logger.info(
+        f"[DEBUG-JUMP] start  form_center={form_view_center:.0f} "
+        f"target_center={target_center:.0f}  diff={remaining:+.0f}"
+    )
+
+    # «колёсный» докат к форме
+    while distance > 5:
+        direction = 1 if remaining > 0 else -1   # пересчитываем каждый шаг
+
+        # динамический минимум шага: чем ближе, тем меньше
+        if distance < 200:
+            min_step = 40
+        elif distance < 600:
+            min_step = 80
+        else:
+            min_step = 120
+
+        pct  = _rnd.uniform(0.12, 0.22)
+        step = max(min_step, min(350, int(distance * pct)))
+        step = min(step, distance)
+
+        await human_scroll(direction * step)
+        logger.info(f"[SCROLL] wheel {'down' if direction>0 else 'up'} {step}")
+        await asyncio.sleep(_rnd.uniform(0.20, 0.45))
+
+        # пересчёт после шага
+        rect             = await form.evaluate("el => el.getBoundingClientRect()")
+        form_view_center = rect["top"] + rect["height"] / 2
+        remaining        = form_view_center - target_center
+        distance         = abs(remaining)
+        curr_sign        = 1 if remaining > 0 else -1
+
+        # если знак поменялся — форму «перелетели», достаточно
+        if curr_sign != prev_sign:
             break
+        prev_sign = curr_sign
 
-        if not bottom_visible:
-            step = _rnd.choice(
-                [
-                    _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
-                    _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
-                ]
-            )
-            await human_scroll(step)
-            logger.info(f"[SCROLL] wheel down {step}")
-            await asyncio.sleep(_rnd.uniform(0.12, 0.25))
-            continue
+    # добиваем последние пиксели и лёгкий «джиттер»
+    if abs(remaining) > 0:
+        jitter = _rnd.randint(-10, 10)  # ±10 px для естественности
+        await human_scroll(int(remaining + jitter))
 
-        if top < zone_min:
-            step = _rnd.randint(40, 60)
-            await human_scroll(-step)
-            logger.info(f"[SCROLL] wheel up {step}")
-            await asyncio.sleep(_rnd.uniform(0.12, 0.25))
-            continue
+    await asyncio.sleep(0.5)
 
-        step = _rnd.choice(
-            [
-                _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
-                _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
-            ]
-        )
-        await human_scroll(step)
-        logger.info(f"[SCROLL] wheel down {step}")
-        await asyncio.sleep(_rnd.uniform(0.12, 0.25))
 
-    else:
-        logger.warning(f"[WARN] scroll_to_form_like_reading: timeout {timeout}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

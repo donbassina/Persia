@@ -434,7 +434,7 @@ async def human_type(page, selector: str, text: str, ctx: RunContext):
     """Вводит `text` в элемент `selector` максимально «по-человечески»."""
     await page.focus(selector)
     n = len(text)
-    coef = 0.6 if n <= 3 else 1.15 if n > 20 else 1.0
+    coef = 0.8 if n <= 3 else 1.15 if n > 20 else 1.0
     total = 0.0
 
     for char in text:
@@ -451,118 +451,307 @@ async def human_type(page, selector: str, text: str, ctx: RunContext):
     logger.info(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}')
 
 
-async def fill_full_name(page, name, ctx: RunContext, retries=3):
+# -------------------- ФИО --------------------
+async def fill_full_name(page, name: str, ctx: RunContext, retries: int = 3) -> bool:
     for attempt in range(retries):
         try:
             input_box = page.locator(selectors["form"]["name"])
+
+            # ► СКРОЛЛ, если нужно, чтобы поле оказалось в видимой зоне
+            await _scroll_if_needed(input_box, dropdown_room=150, step_range=(300, 420))   # room≈высота клавиатуры
+
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            await page.wait_for_timeout(50)
-            await page.wait_for_timeout(100)
+            await page.wait_for_timeout(_rnd.randint(20, 40))
+
             await input_box.fill("")
             await human_type(page, selectors["form"]["name"], name, ctx)
-            value = await input_box.input_value()
-            if value.strip() == name.strip():
+
+            if (await input_box.input_value()).strip() == name.strip():
                 return True
-            await page.wait_for_timeout(200)
+            await page.wait_for_timeout(_rnd.randint(40, 70))
         except Exception as e:
             logger.warning("fill_full_name attempt %s failed: %s", attempt + 1, e)
+
     logger.error("Не удалось заполнить поле ФИО")
     return False
 
 
-async def fill_city(page, city, ctx: RunContext, retries=3):
-    item_sel = selectors["form"]["city_item"]
-    list_sel = selectors["form"].get("city_list", item_sel)
-    min_chars = (len(city) * 75 + 99) // 100
+
+
+
+
+
+
+
+
+# ========================= ГОРОД ========================================================================
+
+
+
+
+
+
+# -------------------- ГОРОД --------------------
+async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
+    """
+    Печатает `city` по-человечески и выбирает его в выпадашке.
+    Алгоритм:
+      1. при необходимости — микро-скролл, чтобы поле было видно;
+      2. курсор → клик по инпуту, очищаем;
+      3. печатаем по одной букве с human-delay, после каждой буквы:
+           • триггерим 'input' и 'keyup';
+           • ждём, пока список вариантов обновится (≤ 0.9 с);
+           • если набрано ≥ 75 % слова и вариантов ≤ 4 —
+             выбираем точное совпадение.
+    """
+    item_sel        = selectors["form"]["city_item"]
+    list_sel        = selectors["form"].get("city_list", item_sel)
+    list_sel_visible = f"{list_sel}:visible"      # считаем только видимые
+
     for attempt in range(retries):
         try:
-            input_box = page.locator(selectors["form"]["city"])
-            await human_move_cursor(page, input_box, ctx)
-            await ghost_click(input_box)
-            await page.wait_for_timeout(50)
-            await page.wait_for_timeout(100)
-            await input_box.fill("")
+            inp = page.locator(selectors["form"]["city"])
+
+            # 1) скроллим, если под полем < 260 px
+            await _scroll_if_needed(inp, dropdown_room=260, step_range=(280, 300))
+
+            # 2) курсор, клик, очистка
+            await human_move_cursor(page, inp, ctx)
+            await ghost_click(inp)
+            await inp.fill("")
+
+            target_len = max(2, int(len(city) * 0.75))   # ≥ 75 %
             typed = ""
-            prev_first = ""
+
             for ch in city:
-                await human_type_city_autocomplete(
-                    page, selectors["form"]["city"], ch, ctx
-                )
+                # 3-а) печать одной буквы с human-delay
+                await human_type_city_autocomplete(page, selectors["form"]["city"], ch, ctx)
                 typed += ch
-                list_locator = page.locator(list_sel)
-                updated = False
-                for _ in range(20):
-                    count = await list_locator.count()
-                    if count > 0:
-                        first = (await list_locator.nth(0).inner_text()).strip()
-                        if first != prev_first:
-                            updated = True
-                            break
-                    await asyncio.sleep(0.05)
-                if not updated:
-                    raise ValueError("city list not updated")
-                prev_first = first
-                items = []
-                for i in range(count):
-                    txt = (await list_locator.nth(i).inner_text()).strip()
-                    if txt:
-                        items.append(txt)
-                if len(typed) >= min_chars and len(items) <= 2 and city in items:
-                    target = page.locator(item_sel).get_by_text(city, exact=True)
-                    await human_move_cursor(page, target, ctx)
-                    await ghost_click(target)
-                    value = (await input_box.input_value()).strip()
-                    if value == city.strip():
-                        return True
-                    raise ValueError("field value mismatch")
-            target = page.locator(item_sel).get_by_text(city, exact=True)
-            if await target.count() > 0:
-                await human_move_cursor(page, target, ctx)
-                await ghost_click(target)
-                value = (await input_box.input_value()).strip()
-                if value == city.strip():
-                    return True
-            raise ValueError("city not found in suggestions")
+
+                # 3-б) пинаем автокомплит
+                await page.evaluate(
+                    """sel => {
+                        const el = document.querySelector(sel);
+                        if (!el) return;
+                        ['input', 'keyup'].forEach(t =>
+                            el.dispatchEvent(new Event(t, { bubbles: true }))
+                        );
+                    }""",
+                    selectors["form"]["city"],
+                )
+
+                # 3-в) короткая «человечная» пауза
+                await asyncio.sleep(_rnd.uniform(0.06, 0.14))
+
+                # 3-г) ждём изменения списка (≤ 15 × 60 мс)
+                lst = page.locator(list_sel_visible)
+                prev_cnt = -1
+                for _ in range(15):
+                    cnt = await lst.count()
+                    if cnt > 0 and cnt != prev_cnt:
+                        break
+                    prev_cnt = cnt
+                    await asyncio.sleep(0.06)
+                else:
+                    raise ValueError("dropdown no change")
+
+                # 3-д) если вариантов мало — кликаем нужный
+                if len(typed) >= target_len and cnt <= 4:
+                    options = [
+                        (await lst.nth(i).inner_text()).strip()
+                        for i in range(cnt)
+                    ]
+                    if city in options:
+                        idx   = options.index(city)
+                        item  = lst.nth(idx)
+                        await human_move_cursor(page, item, ctx)
+                        await ghost_click(item)
+                        await asyncio.sleep(_rnd.uniform(0.03, 0.06))
+                        if (await inp.input_value()).strip() == city.strip():
+                            return True
+                        raise ValueError("value mismatch after click")
+
+            # если весь цикл прошёл без выбора — ошибка
+            raise ValueError(f"{city} not found")
         except Exception as e:
             logger.warning("fill_city attempt %s failed: %s", attempt + 1, e)
+
     logger.error("Не удалось выбрать город")
-    raise ValueError("Не удалось выбрать город")
+    raise ValueError("fill_city failed")
 
 
-async def fill_phone(page, phone, ctx: RunContext, retries=3):
+
+
+
+
+
+# ==========================================================================================================
+
+
+
+
+
+
+
+
+
+
+async def fill_phone(page, phone: str, ctx: RunContext, retries: int = 3) -> bool:
+    """Заполняет поле телефона «по-человечески» с учётом маски (+7 (999) …).
+       Сравниваем только последние 10 цифр, чтобы игнорировать скобки/пробелы/+7."""
+    # функция-помощник: оставляем только 10 конечных цифр
+    def _norm(num: str) -> str:
+        return ''.join(ch for ch in num if ch.isdigit())[-10:]
+
+    target = _norm(phone)
+
     for attempt in range(retries):
         try:
             input_box = page.locator(selectors["form"]["phone"])
+
+            # курсор → клик по полю
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            await page.wait_for_timeout(50)
-            await page.wait_for_timeout(100)
+            await page.wait_for_timeout(_rnd.randint(25, 45))
+
+            # очищаем и печатаем номер
             await input_box.fill("")
             await human_type(page, selectors["form"]["phone"], phone, ctx)
-            value = await input_box.input_value()
-            if value.strip() == phone.strip():
+
+            # ждём, пока маска применится
+            await page.wait_for_timeout(_rnd.randint(60, 80))
+
+            # проверяем, что введён тот же набор цифр
+            typed = await input_box.input_value()
+            if _norm(typed) == target:
+                logger.info("[INFO] Телефон введён корректно: %s → %s", phone, typed)
                 return True
-            await page.wait_for_timeout(200)
+
+            # если не совпало — лёгкая пауза и повтор
+            logger.warning(
+                "fill_phone mismatch (attempt %s): typed=%s exp=%s",
+                attempt + 1,
+                typed,
+                phone,
+            )
+            await page.wait_for_timeout(_rnd.randint(40, 70))
+
         except Exception as e:
             logger.warning("fill_phone attempt %s failed: %s", attempt + 1, e)
+
     logger.error("Не удалось заполнить поле Телефон")
     return False
 
 
-async def fill_gender(page, gender, ctx: RunContext, retries=3):
+
+# ==========================================================================================================
+
+
+# ─── helpers ──────────────────────────────────────────────────────────
+async def _tiny_scroll_once(px: int) -> None:
+    """
+    «Человечный» короткий скролл на ±px px.
+    Делим общий шаг на 2-4 подшажка (40-70 px каждый) с микропаузами,
+    чтобы глаз видел естественную прокрутку колёсиком.
+    """
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+
+    direction   = 1 if px > 0 else -1
+    remain      = abs(px)
+    while remain > 0:
+        step = min(_rnd.randint(40, 70), remain)      # 40-70 px
+        await GCURSOR.wheel(0, direction * step)
+        remain -= step
+        await asyncio.sleep(_rnd.uniform(0.04, 0.08))
+# ──────────────────────────────────────────────────────────────────────
+
+
+# ─── helpers ──────────────────────────────────────────────────────────
+async def _scroll_if_needed(
+    locator,
+    *,
+    dropdown_room: int = 220,
+    step_range: tuple[int, int] = (170, 190),   # ← новое
+) -> None:
+    """
+    Проверяет, хватает ли места под элементом для выпадашки/клика.
+    Если нет – делает ОДИН «человечный» скролл вниз.
+
+    locator        – Playwright-локатор (input, select и т.п.)
+    dropdown_room  – минимальное свободное пространство под элементом, px
+    step_range     – диапазон шага колёсиком, px
+    """
+    page = locator.page
+    box  = await locator.bounding_box()
+    if not box:                                   # элемент не найден
+        return
+
+    vh          = await page.evaluate("window.innerHeight")
+    space_below = vh - (box["y"] + box["height"])
+
+    if space_below < dropdown_room:               # нужен микро-скролл
+        step = _rnd.randint(*step_range)          # ← используем новый диапазон
+        await _tiny_scroll_once(step)
+        await asyncio.sleep(_rnd.uniform(0.18, 0.33))
+# ──────────────────────────────────────────────────────────────────────
+
+
+
+
+# -------------------- ПОЛ --------------------
+async def fill_gender(page, gender: str, ctx: RunContext, retries: int = 3) -> bool:
+    input_sel = selectors["form"]["gender"]
+    item_sel  = selectors["form"]["gender_item"]
+    input_box = page.locator(input_sel)
+
     for attempt in range(retries):
         try:
-            input_box = page.locator(selectors["form"]["gender"])
+            # ► тот же универсальный скролл
+            await _scroll_if_needed(input_box, dropdown_room=220, step_range=(190, 200))
+
+            # открыть список
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            item_sel = selectors["form"]["gender_item"]
-            await page.locator(item_sel).get_by_text(gender, exact=True).click()
-            return True
+            
+
+            # выбрать пункт
+            option = page.locator(item_sel).get_by_text(gender, exact=True)
+            await option.wait_for(state="visible", timeout=4_000)
+            await human_move_cursor(page, option, ctx)
+            await ghost_click(option)
+            
+
+            # проверка
+            val = (await input_box.input_value()).strip()
+            if val.lower().startswith(gender.lower()):
+                return True
+            raise ValueError(f'gender value mismatch (“{val}”)')
         except Exception as e:
             logger.warning("fill_gender attempt %s failed: %s", attempt + 1, e)
+
     logger.error("Не удалось выбрать пол")
     return False
+
+
+
+
+
+
+
+
+
+
+
+# ==========================================================================================================
+
+
+
+
+
+
+
 
 
 async def fill_age(page, age, ctx: RunContext, retries=3):
@@ -571,14 +760,13 @@ async def fill_age(page, age, ctx: RunContext, retries=3):
             input_box = page.locator(selectors["form"]["age"])
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            await page.wait_for_timeout(50)
-            await page.wait_for_timeout(100)
+            await page.wait_for_timeout(_rnd.randint(25, 45))
             await input_box.fill("")
             await human_type(page, selectors["form"]["age"], age, ctx)
             value = await input_box.input_value()
             if value.strip() == age.strip():
                 return True
-            await page.wait_for_timeout(200)
+            await page.wait_for_timeout(_rnd.randint(40, 70))
         except Exception as e:
             logger.warning("fill_age attempt %s failed: %s", attempt + 1, e)
     logger.error("Не удалось заполнить поле Возраст")
@@ -607,7 +795,9 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
 async def fill_policy_checkbox(page, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            await ghost_click(page.locator(selectors["form"]["policy"]))
+            input_box = page.locator(selectors["form"]["policy"])
+            await _scroll_if_needed(input_box)
+            await ghost_click(input_box)
             return True
         except Exception as e:
             logger.warning(
@@ -697,11 +887,11 @@ async def human_move_cursor(page, el, ctx: RunContext):
         raise RuntimeError("GCURSOR not initialized")
     cur = getattr(ctx, "mouse_pos", (0, 0))
     pivots = []
-    if _rnd.random() < 0.7:
+    if _rnd.random() < 0.3:
         pivots.append(
             (
-                (cur[0] + target_x) / 2 + _rnd.uniform(-15, 15),
-                (cur[1] + target_y) / 2 + _rnd.uniform(-15, 15),
+                (cur[0] + target_x) / 2 + _rnd.uniform(-10, 10),
+                (cur[1] + target_y) / 2 + _rnd.uniform(-10, 10),
             )
         )
     pivots.append((target_x, target_y))
@@ -915,7 +1105,7 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         jitter = _rnd.randint(-10, 10)  # ±10 px для естественности
         await human_scroll(int(remaining + jitter))
 
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.25)
 
 
 
@@ -1135,6 +1325,10 @@ if (window.WebGL2RenderingContext) {{
         page = await context.new_page()
         global GCURSOR
         GCURSOR = create_cursor(page)
+        # Ускоряем ghost-cursor для формы
+        GCURSOR.min_speed = 1750   # px/сек
+        GCURSOR.max_speed = 2200   # px/сек
+
         if not hasattr(GCURSOR, "wheel"):
 
             async def _wheel(dx: float, dy: float):
@@ -1211,27 +1405,27 @@ if (window.WebGL2RenderingContext) {{
 
                 logger.info("[INFO] Вводим город через fill_city")
                 await fill_city(page, user_city, ctx)
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0)
 
                 logger.info("[INFO] Вводим телефон через fill_phone")
                 await fill_phone(page, phone_for_form, ctx)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0)
 
                 logger.info("[INFO] Вводим пол через fill_gender")
                 await fill_gender(page, user_gender, ctx)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0)
 
                 logger.info("[INFO] Вводим возраст через fill_age")
                 await fill_age(page, user_age, ctx)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0)
 
                 logger.info("[INFO] Вводим тип курьера через fill_courier_type")
                 await fill_courier_type(page, user_courier_type, ctx)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0)
 
                 logger.info("[INFO] Ставим галочку политики через fill_policy_checkbox")
                 await fill_policy_checkbox(page, ctx)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(4)
 
                 logger.info(
                     "[INFO] Все поля формы заполнены и чекбокс отмечен. Ожидание завершено."

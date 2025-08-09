@@ -290,8 +290,12 @@ try:
             print(json.dumps(fatal, ensure_ascii=False))
             sys.exit(1)
         if not probe_proxy(parsed):
-            logger.warning("proxy_unavailable – continue without proxy")
-            proxy_cfg = None
+            logger.error("bad_proxy_unreachable")
+            fatal = {"phone": user_phone, "error": "bad_proxy_unreachable"}
+            # Отправляем webhook (если не закрыт браузер вручную; на этом этапе браузер ещё не запускался)
+            send_webhook(fatal, webhook_url, ctx)
+            print(json.dumps(fatal, ensure_ascii=False))
+            sys.exit(1)
     if ctx.json_headless is not None:
         logger.info("headless overridden by JSON → %s", ctx.json_headless)
 except Exception as e:

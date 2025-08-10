@@ -1530,9 +1530,15 @@ if (window.WebGL2RenderingContext) {{
                 await asyncio.sleep(_rnd.uniform(0.7, 1.7))
                 try:
                     old_url = page.url
+                    submit_btn = page.locator(selectors["form"]["submit"])
+                    modal_selector = selectors["form"]["thank_you"]
+                    start_time = time.time()
+
                     try:
-                        await submit_form(page, ctx)
-                        logger.info("[INFO] Кнопка 'Оставить заявку' успешно нажата")
+                        await ghost_click(submit_btn)
+                        logger.info("[INFO] Первый клик по кнопке 'Оставить заявку'")
+                        await ghost_click(submit_btn)
+                        logger.info("[INFO] Второй клик по кнопке 'Оставить заявку'")
                     except Exception as e:
                         logger.error(
                             "Не удалось кликнуть по кнопке 'Оставить заявку': %s",
@@ -1540,89 +1546,67 @@ if (window.WebGL2RenderingContext) {{
                         )
                         raise
 
+                    async def wait_for_event(deadline: float) -> bool:
+                        while True:
+                            if page.url != old_url:
+                                logger.info("[INFO] URL изменился — заявка успешно отправлена")
+                                return True
+                            modal = await page.query_selector(modal_selector)
+                            if modal:
+                                logger.info("[INFO] Всплывающее окно подтверждения появилось")
+                                return True
+                            if time.time() > deadline:
+                                return False
+                            await asyncio.sleep(0.5)
+
+                    success = await wait_for_event(start_time + 30)
+                    if not success:
+                        await ghost_click(submit_btn)
+                        logger.info("[INFO] Третий клик по кнопке 'Оставить заявку'")
+                        success = await wait_for_event(start_time + 120)
+
+                    from urllib.parse import urlparse, parse_qs
+
+                    final_url = page.url
+                    if success:
+                        parsed = urlparse(final_url)
+                        ctx.postback = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+                        qs = parse_qs(parsed.query)
+                        if "utm_term" in qs:
+                            logger.info("utm_term: %s", qs["utm_term"][0])
+                    else:
+                        logger.error("Редирект или всплывающее окно 'Спасибо' не появилось")
+                        ctx.errors.append("no_redirect")
+
                     try:
-                        # Ждём редирект (10 сек)
-                        await page.wait_for_function(
-                            f'document.location.href !== "{old_url}"',
-                            timeout=CFG["REDIRECT_TIMEOUT"],
+                        screenshot_dir = os.path.join(WORK_DIR, "Media", "Screenshots")
+                        os.makedirs(screenshot_dir, exist_ok=True)
+                        date_str = datetime.now().strftime("%d.%m.%Y")
+                        base = f"{date_str}-{user_phone}-final"
+                        idx = 0
+                        while True:
+                            suffix = "" if idx == 0 else f"({idx})"
+                            screenshot_name = f"{base}{suffix}.png"
+                            path = os.path.join(screenshot_dir, screenshot_name)
+                            if not os.path.exists(path):
+                                break
+                            idx += 1
+                        await page.screenshot(path=path, full_page=False)
+                        ctx.screenshot_path = path
+                        logger.info(
+                            f"[INFO] Скриншот финальной страницы сохранён: {ctx.screenshot_path}",
                         )
-                        logger.info("[INFO] URL изменился — заявка успешно отправлена")
-
-                        modal_selector = selectors["form"]["thank_you"]
-                        modal = await page.query_selector(modal_selector)
-
-                        if modal is None:
-                            try:
-                                await page.wait_for_selector(
-                                    modal_selector,
-                                    timeout=CFG["MODAL_SELECTOR_TIMEOUT"],
-                                )
-                                logger.info(
-                                    "[INFO] Всплывающее окно подтверждения появилось после ожидания"
-                                )
-                            except PWTimeoutError:
-                                logger.info("selector_not_found:thank_you")
-                                html_content = await page.content()
-                                logger.error(
-                                    "Всплывающее окно подтверждения НЕ появилось после ожидания: Timeout"
-                                )
-                                logger.info(
-                                    f"[DEBUG HTML CONTENT]: {html_content[:2000]}"
-                                )
-                                raise
-                            except Exception as e:
-                                html_content = await page.content()
-                                logger.error(
-                                    "Всплывающее окно подтверждения НЕ появилось после ожидания: %s",
-                                    e,
-                                )
-                                logger.info(
-                                    f"[DEBUG HTML CONTENT]: {html_content[:2000]}"
-                                )
-                                raise
-                        else:
-                            logger.info(
-                                "[INFO] Всплывающее окно подтверждения уже было на экране"
-                            )
-
-                        logger.info("[INFO] Всплывающее окно подтверждения появилось")
-                        await asyncio.sleep(_rnd.uniform(1, 4))
-                        # ====== Этап 7: извлечение utm_term из финального URL ======
-                        try:
-                            final_url = page.url
-                            logger.info(
-                                "[DEBUG] Финальный URL для поиска utm_term: %s",
-                                final_url,
-                            )
-                            ctx.postback = None
-                            if "utm_term=" in final_url:
-                                start = final_url.find("utm_term=") + len("utm_term=")
-                                end = final_url.find("&", start)
-                                if end == -1:
-                                    ctx.postback = final_url[start:]
-                                else:
-                                    ctx.postback = final_url[start:end]
-                                logger.info("POSTBACK: %s", ctx.postback)
-                            else:
-                                logger.error("utm_term не найден в ссылке")
-                                raise Exception("utm_term not found in final URL")
-                        except Exception as e:
-                            logger.error("Ошибка на этапе извлечения utm_term: %s", e)
                     except Exception as e:
-                        if page.url == old_url:
-                            logger.error("Редирект после клика не произошел")
-                            raise Exception("Редирект после клика не произошел")
-                        else:
-                            logger.error(
-                                "Всплывающее окно подтверждения НЕ появилось: %s",
-                                e,
-                            )
+                        logger.error(
+                            "Не удалось сохранить финальный скриншот: %s",
+                            e,
+                        )
+
                 except Exception as e:
                     logger.error(
                         "Ошибка при клике по кнопке 'Оставить заявку': %s",
                         e,
                     )
-
         finally:
             await context.close()
             await browser.close()

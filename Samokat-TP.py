@@ -1513,6 +1513,9 @@ if (window.WebGL2RenderingContext) {{
                 # ====================================================================================
                 # Этап 6. Ghost-cursor доводит курсор до кнопки + нативный клик + извлечение utm_term
                 # ====================================================================================
+                url_before = page.url
+                did_redirect = False
+                thankyou_ok = False
                 scroll_step = _rnd.choice(
                     [
                         _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
@@ -1560,6 +1563,21 @@ if (window.WebGL2RenderingContext) {{
                         logger.info("[INFO] Третий клик по кнопке 'Оставить заявку'")
                         success = await wait_for_event(start_time + 120)
 
+                    # Зафиксировать редирект, если он уже засчитан механизмом ожидания
+                    if not did_redirect:
+                        try:
+                            if page.url != url_before:
+                                did_redirect = True  # успех ожидания навигации
+                        except Exception:
+                            pass
+
+                    # Дополнительная подстраховка: сравнение URL до/после
+                    if not did_redirect and page.url != url_before:
+                        did_redirect = True
+
+                    el_thanks = await page.query_selector(modal_selector)
+                    thankyou_ok = bool(el_thanks)
+
                     from urllib.parse import urlparse, parse_qs
 
                     final_url = page.url
@@ -1571,7 +1589,11 @@ if (window.WebGL2RenderingContext) {{
                             logger.info("utm_term: %s", qs["utm_term"][0])
                     else:
                         logger.error("Редирект или всплывающее окно 'Спасибо' не появилось")
+
+                    if not did_redirect:
                         ctx.errors.append("no_redirect")
+                    elif not thankyou_ok:
+                        ctx.errors.append("thankyou_timeout")
 
                     try:
                         screenshot_dir = os.path.join(WORK_DIR, "Media", "Screenshots")

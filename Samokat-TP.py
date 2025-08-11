@@ -1436,16 +1436,12 @@ if (window.WebGL2RenderingContext) {{
             # ====================================================================================
             screenshot_dir = os.path.join(WORK_DIR, "Media", "Screenshots")
             os.makedirs(screenshot_dir, exist_ok=True)
-            date_str = datetime.now().strftime("%d.%m.%Y")
-            base = f"{date_str}-{user_phone}"
-            idx = 0
-            while True:
-                suffix = "" if idx == 0 else f"({idx})"
-                screenshot_name = f"{base}{suffix}.png"
-                path = os.path.join(screenshot_dir, screenshot_name)
-                if not os.path.exists(path):
-                    break
-                idx += 1
+
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            filename = f"{ts}_{user_phone}.png"
+
+            path = os.path.join(screenshot_dir, filename)
+
             await page.screenshot(path=path, full_page=False)
             ctx.screenshot_path = path
             logger.info(f"[INFO] Скриншот формы сохранён: {ctx.screenshot_path}")
@@ -1595,29 +1591,6 @@ if (window.WebGL2RenderingContext) {{
                     elif not thankyou_ok:
                         ctx.errors.append("thankyou_timeout")
 
-                    try:
-                        screenshot_dir = os.path.join(WORK_DIR, "Media", "Screenshots")
-                        os.makedirs(screenshot_dir, exist_ok=True)
-                        date_str = datetime.now().strftime("%d.%m.%Y")
-                        base = f"{date_str}-{user_phone}-final"
-                        idx = 0
-                        while True:
-                            suffix = "" if idx == 0 else f"({idx})"
-                            screenshot_name = f"{base}{suffix}.png"
-                            path = os.path.join(screenshot_dir, screenshot_name)
-                            if not os.path.exists(path):
-                                break
-                            idx += 1
-                        await page.screenshot(path=path, full_page=False)
-                        ctx.screenshot_path = path
-                        logger.info(
-                            f"[INFO] Скриншот финальной страницы сохранён: {ctx.screenshot_path}",
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "Не удалось сохранить финальный скриншот: %s",
-                            e,
-                        )
 
                 except Exception as e:
                     logger.error(
@@ -1646,7 +1619,10 @@ async def main(ctx: RunContext):
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main(ctx))
+        asyncio.run(asyncio.wait_for(main(ctx), timeout=300))
+    except asyncio.TimeoutError:
+        logger.error("Global timeout 300s hit")
+        ctx.errors.append("unexpected_error")
     except RuntimeError as e:
         if str(e).startswith("selectors profile"):
             logger.info(f"[FATAL] {e}")

@@ -182,25 +182,20 @@ def send_result(
     proxy_used: bool,
 ) -> None:
     """Send final result via webhook and print JSON."""
-    result: dict[str, str | bool | None] = {"phone": phone, "proxy_used": proxy_used}
+    result: dict[str, str] = {"phone": phone}
 
     if ctx.errors:
         result["error"] = ", ".join(ctx.errors)
-        if ctx.screenshot_path:
-            result["screenshot"] = os.path.abspath(ctx.screenshot_path)
+    elif not ctx.postback:
+        result["error"] = "POSTBACK missing"
     else:
-        if ctx.postback:
-            result["POSTBACK"] = ctx.postback
-        else:
-            result["error"] = "POSTBACK missing"
-            if ctx.screenshot_path:
-                result["screenshot"] = os.path.abspath(ctx.screenshot_path)
-
-    if ctx.log_file:
-        result["log"] = os.path.abspath(ctx.log_file)
+        result["POSTBACK"] = ctx.postback
 
     if headless_error and "error" not in result:
         result["error"] = "bad headless value"
+
+    if "error" in result and ctx.screenshot_path:
+        result["screenshot"] = ctx.screenshot_path
 
     result_state = "SUCCESS" if "error" not in result else "ERROR"
     logger.info("RESULT: %s", result_state)

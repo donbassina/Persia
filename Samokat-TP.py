@@ -1618,8 +1618,45 @@ async def main(ctx: RunContext):
 
 
 if __name__ == "__main__":
+    # ---- Идемпотентность: блокировка дубликатов по (site, phone) ----
+    run_main = True
     try:
-        asyncio.run(asyncio.wait_for(main(ctx), timeout=300))
+        from urllib.parse import urlparse
+        import hashlib
+        import ctypes
+        from ctypes import wintypes
+
+        site_raw = params.get("url") or ""
+        site = urlparse(site_raw).netloc or site_raw or "unknown"
+        key_src = f"{site}|{user_phone}"
+
+        digest = hashlib.sha1(key_src.encode("utf-8"), usedforsecurity=False).hexdigest()
+        mutex_name = f"Global\\samokat_{digest}"
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        CreateMutexW = kernel32.CreateMutexW
+        CreateMutexW.restype = wintypes.HANDLE
+        CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+
+        handle = CreateMutexW(None, True, mutex_name)
+        last_error = ctypes.get_last_error()
+        ERROR_ALREADY_EXISTS = 183
+
+        if not handle:
+            logger.warning("CreateMutexW failed; proceeding without idempotency lock")
+        elif last_error == ERROR_ALREADY_EXISTS:
+            logger.info("Duplicate run blocked for key: %s", key_src)
+            ctx.errors.append("duplicate_request")
+            run_main = False
+    except Exception as e:
+        logger.warning("Idempotency init failed: %s", e)
+
+    # ---- Дальше существующий код: глобальный таймаут и перехваты ----
+    try:
+        if run_main:
+            asyncio.run(asyncio.wait_for(main(ctx), timeout=300))
+        else:
+            logger.info("Skip main() due to duplicate_request")
     except asyncio.TimeoutError:
         logger.error("Global timeout 300s hit")
         ctx.errors.append("unexpected_error")

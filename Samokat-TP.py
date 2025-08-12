@@ -13,6 +13,7 @@ from random import SystemRandom
 
 import logging
 import requests
+from urllib.parse import urlparse
 
 from python_ghost_cursor.playwright_async import create_cursor
 from python_ghost_cursor.playwright_async._spoof import GhostCursor
@@ -174,6 +175,27 @@ def send_webhook(result, webhook_url, ctx: RunContext):
         logger.error("webhook 3rd fail: %s", e)
 
 
+def _safe_proxy_str(parsed: dict | None, raw: str | None) -> str:
+    """Возвращает строку вида 'scheme://host:port' без логина/пароля.
+    Если есть parsed (из parse_proxy), используем его поля, иначе парсим raw по минимуму.
+    """
+    if parsed:
+        scheme = parsed.get("scheme")
+        host = parsed.get("host")
+        port = parsed.get("port")
+        if scheme and host and port:
+            return f"{scheme}://{host}:{port}"
+    if raw:
+        try:
+            up = urlparse(raw)
+            if up.scheme and up.hostname and up.port:
+                return f"{up.scheme}://{up.hostname}:{up.port}"
+        except Exception:
+            pass
+        return raw
+    return ""
+
+
 # --- Единый перевод кодов ошибок на русский ---
 ERROR_RU = {
     "bad_proxy_format": "Некорректный формат прокси",
@@ -325,6 +347,8 @@ try:
             send_webhook(fatal, webhook_url, ctx)
             print(json.dumps(fatal, ensure_ascii=False))
             sys.exit(1)
+        else:
+            logger.info("Прокси проверен: OK — %s", _safe_proxy_str(parsed, proxy_url))
     if ctx.json_headless is not None:
         logger.info("headless overridden by JSON → %s", ctx.json_headless)
 except Exception as e:

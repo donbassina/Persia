@@ -174,6 +174,36 @@ def send_webhook(result, webhook_url, ctx: RunContext):
         logger.error("webhook 3rd fail: %s", e)
 
 
+# --- Единый перевод кодов ошибок на русский ---
+ERROR_RU = {
+    "bad_proxy_format": "Некорректный формат прокси",
+    "bad_proxy_unreachable": "Прокси недоступен",
+    "selectors_profile_not_found": "Профиль селекторов не найден",
+    "selectors_not_found": "Профиль селекторов не найден",
+    "no_redirect": "Не произошёл редирект после отправки формы",
+    "thankyou_timeout": "Сообщение «Спасибо» не появилось за 120 секунд",
+    "duplicate_request": "Повторный запуск для того же сайта и телефона",
+    "unexpected_error": "Непредвиденная ошибка выполнения",
+    "POSTBACK missing": "POSTBACK отсутствует",
+    "bad headless value": "Некорректное значение параметра headless",
+}
+
+_REQUIRED_FIELD_NAMES = {"Имя", "Город", "Телефон", "Пол", "Возраст", "Тип курьера"}
+
+
+def _to_ru(err: str) -> str:
+    # Если это известный код — вернём русский эквивалент; иначе — как есть
+    return ERROR_RU.get(err, err)
+
+
+def _errors_to_ru(err_list: list[str]) -> str:
+    # Если это исключительно названия обязательных полей — свернём в одну фразу
+    if err_list and all(e in _REQUIRED_FIELD_NAMES for e in err_list):
+        return "Не заполнены поля: " + ", ".join(err_list)
+    # Иначе переведём каждый код/строку по словарю и склеим
+    return ", ".join(_to_ru(e) for e in err_list)
+
+
 def send_result(
     ctx: RunContext,
     phone: str,
@@ -185,20 +215,24 @@ def send_result(
     result: dict[str, str] = {"phone": phone}
 
     if ctx.errors:
-        result["error"] = ", ".join(ctx.errors)
+        result["error"] = _errors_to_ru(ctx.errors)
     elif not ctx.postback:
-        result["error"] = "POSTBACK missing"
+        result["error"] = _to_ru("POSTBACK missing")
     else:
         result["POSTBACK"] = ctx.postback
 
     if headless_error and "error" not in result:
-        result["error"] = "bad headless value"
+        result["error"] = _to_ru("bad headless value")
 
     if "error" in result and ctx.screenshot_path:
         result["screenshot"] = ctx.screenshot_path
 
     result_state = "SUCCESS" if "error" not in result else "ERROR"
     logger.info("RESULT: %s", result_state)
+    if "error" in result:
+        logger.info("ИТОГ: %s", result["error"])
+    else:
+        logger.info("ИТОГ: Успех (POSTBACK получен)")
 
     if not ctx.browser_closed_manually:
         send_webhook(result, webhook_url, ctx)
@@ -1690,7 +1724,7 @@ with open(ctx.log_file, encoding="utf-8") as f:
         if "[ERROR]" in line:
             error_lines.append(line.strip())
 if error_lines and not ctx.errors:
-    ctx.errors = error_lines
+    ctx.errors = ["unexpected_error"]
 
 proxy_used = proxy_cfg is not None
 logger.info("proxy_used: %s", proxy_used)

@@ -153,6 +153,11 @@ def _to_bool(val: str | bool) -> bool:
     return str(val).lower() in {"1", "true", "yes", "on"}
 
 
+def normalize_phone(num: str) -> str:
+    digits = "".join(ch for ch in str(num) if ch.isdigit())
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
 def send_webhook(result, webhook_url, ctx: RunContext):
     if webhook_url:
         e = None
@@ -205,6 +210,7 @@ ERROR_RU = {
     "no_redirect": "Не произошёл редирект после отправки формы",
     "thankyou_timeout": "Сообщение «Спасибо» не появилось за 120 секунд",
     "duplicate_request": "Повторный запуск для того же сайта и телефона",
+    "duplicate_phone": "Одновременный запуск для этого телефона",
     "unexpected_error": "Непредвиденная ошибка выполнения",
     "POSTBACK missing": "POSTBACK отсутствует",
     "bad headless value": "Некорректное значение параметра headless",
@@ -530,7 +536,9 @@ async def fill_full_name(page, name: str, ctx: RunContext, retries: int = 3) -> 
             input_box = page.locator(selectors["form"]["name"])
 
             # ► СКРОЛЛ, если нужно, чтобы поле оказалось в видимой зоне
-            await _scroll_if_needed(input_box, dropdown_room=150, step_range=(300, 420))   # room≈высота клавиатуры
+            await _scroll_if_needed(
+                input_box, dropdown_room=150, step_range=(300, 420)
+            )  # room≈высота клавиатуры
 
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
@@ -549,19 +557,7 @@ async def fill_full_name(page, name: str, ctx: RunContext, retries: int = 3) -> 
     return False
 
 
-
-
-
-
-
-
-
-
 # ========================= ГОРОД ========================================================================
-
-
-
-
 
 
 # -------------------- ГОРОД --------------------
@@ -577,9 +573,9 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
            • если набрано ≥ 75 % слова и вариантов ≤ 4 —
              выбираем точное совпадение.
     """
-    item_sel        = selectors["form"]["city_item"]
-    list_sel        = selectors["form"].get("city_list", item_sel)
-    list_sel_visible = f"{list_sel}:visible"      # считаем только видимые
+    item_sel = selectors["form"]["city_item"]
+    list_sel = selectors["form"].get("city_list", item_sel)
+    list_sel_visible = f"{list_sel}:visible"  # считаем только видимые
 
     for attempt in range(retries):
         try:
@@ -593,12 +589,14 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
             await ghost_click(inp)
             await inp.fill("")
 
-            target_len = max(2, int(len(city) * 0.75))   # ≥ 75 %
+            target_len = max(2, int(len(city) * 0.75))  # ≥ 75 %
             typed = ""
 
             for ch in city:
                 # 3-а) печать одной буквы с human-delay
-                await human_type_city_autocomplete(page, selectors["form"]["city"], ch, ctx)
+                await human_type_city_autocomplete(
+                    page, selectors["form"]["city"], ch, ctx
+                )
                 typed += ch
 
                 # 3-б) пинаем автокомплит
@@ -631,12 +629,11 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
                 # 3-д) если вариантов мало — кликаем нужный
                 if len(typed) >= target_len and cnt <= 4:
                     options = [
-                        (await lst.nth(i).inner_text()).strip()
-                        for i in range(cnt)
+                        (await lst.nth(i).inner_text()).strip() for i in range(cnt)
                     ]
                     if city in options:
-                        idx   = options.index(city)
-                        item  = lst.nth(idx)
+                        idx = options.index(city)
+                        item = lst.nth(idx)
                         await human_move_cursor(page, item, ctx)
                         await ghost_click(item)
                         await asyncio.sleep(_rnd.uniform(0.03, 0.06))
@@ -653,28 +650,16 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
     raise ValueError("fill_city failed")
 
 
-
-
-
-
-
 # ==========================================================================================================
-
-
-
-
-
-
-
-
 
 
 async def fill_phone(page, phone: str, ctx: RunContext, retries: int = 3) -> bool:
     """Заполняет поле телефона «по-человечески» с учётом маски (+7 (999) …).
-       Сравниваем только последние 10 цифр, чтобы игнорировать скобки/пробелы/+7."""
+    Сравниваем только последние 10 цифр, чтобы игнорировать скобки/пробелы/+7."""
+
     # функция-помощник: оставляем только 10 конечных цифр
     def _norm(num: str) -> str:
-        return ''.join(ch for ch in num if ch.isdigit())[-10:]
+        return "".join(ch for ch in num if ch.isdigit())[-10:]
 
     target = _norm(phone)
 
@@ -716,7 +701,6 @@ async def fill_phone(page, phone: str, ctx: RunContext, retries: int = 3) -> boo
     return False
 
 
-
 # ==========================================================================================================
 
 
@@ -730,13 +714,15 @@ async def _tiny_scroll_once(px: int) -> None:
     if GCURSOR is None:
         raise RuntimeError("GCURSOR not initialized")
 
-    direction   = 1 if px > 0 else -1
-    remain      = abs(px)
+    direction = 1 if px > 0 else -1
+    remain = abs(px)
     while remain > 0:
-        step = min(_rnd.randint(40, 70), remain)      # 40-70 px
+        step = min(_rnd.randint(40, 70), remain)  # 40-70 px
         await GCURSOR.wheel(0, direction * step)
         remain -= step
         await asyncio.sleep(_rnd.uniform(0.04, 0.08))
+
+
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -745,7 +731,7 @@ async def _scroll_if_needed(
     locator,
     *,
     dropdown_room: int = 220,
-    step_range: tuple[int, int] = (170, 190),   # ← новое
+    step_range: tuple[int, int] = (170, 190),  # ← новое
 ) -> None:
     """
     Проверяет, хватает ли места под элементом для выпадашки/клика.
@@ -756,26 +742,26 @@ async def _scroll_if_needed(
     step_range     – диапазон шага колёсиком, px
     """
     page = locator.page
-    box  = await locator.bounding_box()
-    if not box:                                   # элемент не найден
+    box = await locator.bounding_box()
+    if not box:  # элемент не найден
         return
 
-    vh          = await page.evaluate("window.innerHeight")
+    vh = await page.evaluate("window.innerHeight")
     space_below = vh - (box["y"] + box["height"])
 
-    if space_below < dropdown_room:               # нужен микро-скролл
-        step = _rnd.randint(*step_range)          # ← используем новый диапазон
+    if space_below < dropdown_room:  # нужен микро-скролл
+        step = _rnd.randint(*step_range)  # ← используем новый диапазон
         await _tiny_scroll_once(step)
         await asyncio.sleep(_rnd.uniform(0.18, 0.33))
+
+
 # ──────────────────────────────────────────────────────────────────────
-
-
 
 
 # -------------------- ПОЛ --------------------
 async def fill_gender(page, gender: str, ctx: RunContext, retries: int = 3) -> bool:
     input_sel = selectors["form"]["gender"]
-    item_sel  = selectors["form"]["gender_item"]
+    item_sel = selectors["form"]["gender_item"]
     input_box = page.locator(input_sel)
 
     for attempt in range(retries):
@@ -786,20 +772,18 @@ async def fill_gender(page, gender: str, ctx: RunContext, retries: int = 3) -> b
             # открыть список
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            
 
             # выбрать пункт
             option = page.locator(item_sel).get_by_text(gender, exact=True)
             await option.wait_for(state="visible", timeout=4_000)
             await human_move_cursor(page, option, ctx)
             await ghost_click(option)
-            
 
             # проверка
             val = (await input_box.input_value()).strip()
             if val.lower().startswith(gender.lower()):
                 return True
-            raise ValueError(f'gender value mismatch (“{val}”)')
+            raise ValueError(f"gender value mismatch (“{val}”)")
         except Exception as e:
             logger.warning("fill_gender attempt %s failed: %s", attempt + 1, e)
 
@@ -807,23 +791,7 @@ async def fill_gender(page, gender: str, ctx: RunContext, retries: int = 3) -> b
     return False
 
 
-
-
-
-
-
-
-
-
-
 # ==========================================================================================================
-
-
-
-
-
-
-
 
 
 async def fill_age(page, age, ctx: RunContext, retries=3):
@@ -1052,26 +1020,9 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                     await asyncio.sleep(_rnd.uniform(0.4, 1.3))
 
 
-
-
-
-
-
-
-
-
 # --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
 # --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
 # --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
-
-
-
-
-
-
-
-
-
 
 
 async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
@@ -1106,17 +1057,14 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         f"distance={distance:.0f}px"
     )
 
-
-    
-
-
     # === ФИНАЛЬНЫЙ СКРОЛ К ФОРМЕ ================
     logger.info("[SCROLL] ► final-jump started")
 
     # положение формы и фикс-хедера
     rect = await form.evaluate("el => el.getBoundingClientRect()")
     form_view_center = rect["top"] + rect["height"] / 2
-    header_h = await page.evaluate("""
+    header_h = await page.evaluate(
+        """
         (() => {
             const el = [...document.querySelectorAll('*')].find(e=>{
                 const s = getComputedStyle(e);
@@ -1126,12 +1074,13 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
             });
             return el ? el.offsetHeight : 0;
         })()
-    """)
+    """
+    )
 
-    target_center  = vh / 2 - header_h + _rnd.randint(0, 60)
-    remaining      = form_view_center - target_center
-    distance       = abs(remaining)
-    prev_sign      = 1 if remaining > 0 else -1   # знак «до/после»
+    target_center = vh / 2 - header_h + _rnd.randint(0, 60)
+    remaining = form_view_center - target_center
+    distance = abs(remaining)
+    prev_sign = 1 if remaining > 0 else -1  # знак «до/после»
 
     logger.info(
         f"[DEBUG-JUMP] start  form_center={form_view_center:.0f} "
@@ -1140,7 +1089,7 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
 
     # «колёсный» докат к форме
     while distance > 5:
-        direction = 1 if remaining > 0 else -1   # пересчитываем каждый шаг
+        direction = 1 if remaining > 0 else -1  # пересчитываем каждый шаг
 
         # динамический минимум шага: чем ближе, тем меньше
         if distance < 200:
@@ -1150,7 +1099,7 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         else:
             min_step = 120
 
-        pct  = _rnd.uniform(0.12, 0.22)
+        pct = _rnd.uniform(0.12, 0.22)
         step = max(min_step, min(350, int(distance * pct)))
         step = min(step, distance)
 
@@ -1159,11 +1108,11 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         await asyncio.sleep(_rnd.uniform(0.20, 0.45))
 
         # пересчёт после шага
-        rect             = await form.evaluate("el => el.getBoundingClientRect()")
+        rect = await form.evaluate("el => el.getBoundingClientRect()")
         form_view_center = rect["top"] + rect["height"] / 2
-        remaining        = form_view_center - target_center
-        distance         = abs(remaining)
-        curr_sign        = 1 if remaining > 0 else -1
+        remaining = form_view_center - target_center
+        distance = abs(remaining)
+        curr_sign = 1 if remaining > 0 else -1
 
         # если знак поменялся — форму «перелетели», достаточно
         if curr_sign != prev_sign:
@@ -1176,55 +1125,6 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         await human_scroll(int(remaining + jitter))
 
     await asyncio.sleep(0.25)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
@@ -1396,8 +1296,8 @@ if (window.WebGL2RenderingContext) {{
         global GCURSOR
         GCURSOR = create_cursor(page)
         # Ускоряем ghost-cursor для формы
-        GCURSOR.min_speed = 1750   # px/сек
-        GCURSOR.max_speed = 2200   # px/сек
+        GCURSOR.min_speed = 1750  # px/сек
+        GCURSOR.max_speed = 2200  # px/сек
 
         if not hasattr(GCURSOR, "wheel"):
 
@@ -1616,11 +1516,15 @@ if (window.WebGL2RenderingContext) {{
                     async def wait_for_event(deadline: float) -> bool:
                         while True:
                             if page.url != old_url:
-                                logger.info("[INFO] URL изменился — заявка успешно отправлена")
+                                logger.info(
+                                    "[INFO] URL изменился — заявка успешно отправлена"
+                                )
                                 return True
                             modal = await page.query_selector(modal_selector)
                             if modal:
-                                logger.info("[INFO] Всплывающее окно подтверждения появилось")
+                                logger.info(
+                                    "[INFO] Всплывающее окно подтверждения появилось"
+                                )
                                 return True
                             if time.time() > deadline:
                                 return False
@@ -1652,18 +1556,21 @@ if (window.WebGL2RenderingContext) {{
                     final_url = page.url
                     if success:
                         parsed = urlparse(final_url)
-                        ctx.postback = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+                        ctx.postback = parsed.path + (
+                            f"?{parsed.query}" if parsed.query else ""
+                        )
                         qs = parse_qs(parsed.query)
                         if "utm_term" in qs:
                             logger.info("utm_term: %s", qs["utm_term"][0])
                     else:
-                        logger.error("Редирект или всплывающее окно 'Спасибо' не появилось")
+                        logger.error(
+                            "Редирект или всплывающее окно 'Спасибо' не появилось"
+                        )
 
                     if not did_redirect:
                         ctx.errors.append("no_redirect")
                     elif not thankyou_ok:
                         ctx.errors.append("thankyou_timeout")
-
 
                 except Exception as e:
                     logger.error(
@@ -1691,36 +1598,40 @@ async def main(ctx: RunContext):
 
 
 if __name__ == "__main__":
-    # ---- Идемпотентность: блокировка дубликатов по (site, phone) ----
+    # ---- Идемпотентность: блокировка дубликатов по телефону ----
     run_main = True
     try:
-        from urllib.parse import urlparse
         import hashlib
         import ctypes
         from ctypes import wintypes
 
-        site_raw = params.get("url") or ""
-        site = urlparse(site_raw).netloc or site_raw or "unknown"
-        key_src = f"{site}|{user_phone}"
+        norm_phone = normalize_phone(user_phone)
+        if not norm_phone:
+            logger.warning("Empty phone → skip duplicate guard")
+        else:
+            key_src = f"phone|{norm_phone}"
+            digest = hashlib.sha1(
+                key_src.encode("utf-8"), usedforsecurity=False
+            ).hexdigest()
+            mutex_name = f"Global\\samokat_{digest}"
 
-        digest = hashlib.sha1(key_src.encode("utf-8"), usedforsecurity=False).hexdigest()
-        mutex_name = f"Global\\samokat_{digest}"
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            CreateMutexW = kernel32.CreateMutexW
+            CreateMutexW.restype = wintypes.HANDLE
+            CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        CreateMutexW = kernel32.CreateMutexW
-        CreateMutexW.restype = wintypes.HANDLE
-        CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+            handle = CreateMutexW(None, True, mutex_name)
+            last_error = ctypes.get_last_error()
+            ERROR_ALREADY_EXISTS = 183
 
-        handle = CreateMutexW(None, True, mutex_name)
-        last_error = ctypes.get_last_error()
-        ERROR_ALREADY_EXISTS = 183
-
-        if not handle:
-            logger.warning("CreateMutexW failed; proceeding without idempotency lock")
-        elif last_error == ERROR_ALREADY_EXISTS:
-            logger.info("Duplicate run blocked for key: %s", key_src)
-            ctx.errors.append("duplicate_request")
-            run_main = False
+            if not handle:
+                logger.warning(
+                    "CreateMutexW failed; proceeding without idempotency lock"
+                )
+            elif last_error == ERROR_ALREADY_EXISTS:
+                logger.info("Duplicate run blocked for phone: %s", norm_phone)
+                ctx.errors.append("duplicate_phone")
+                run_main = False
     except Exception as e:
         logger.warning("Idempotency init failed: %s", e)
 
@@ -1729,7 +1640,7 @@ if __name__ == "__main__":
         if run_main:
             asyncio.run(asyncio.wait_for(main(ctx), timeout=300))
         else:
-            logger.info("Skip main() due to duplicate_request")
+            logger.info("Skip main() due to duplicate_phone")
     except asyncio.TimeoutError:
         logger.error("Global timeout 300s hit")
         ctx.errors.append("unexpected_error")

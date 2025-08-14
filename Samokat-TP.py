@@ -233,22 +233,36 @@ def send_result(
     headless_error: bool,
     proxy_used: bool,
 ) -> None:
-    """Send final result via webhook and print JSON."""
+    """Send final result via webhook and print JSON.
+
+    Требования п.2 «Нового плана»:
+    — Если получен POSTBACK (то есть был редирект или модалка, и мы извлекли postback), ЭТО УСПЕХ.
+    — На успехе НЕЛЬЗЯ добавлять никакой error (в т.ч. за некорректный headless).
+    — Итог не зависит от наличия строк "[ERROR]" в логах (это уберём отдельным патчем ниже).
+    """
     result: dict[str, str] = {"phone": phone}
 
-    if ctx.errors:
-        result["error"] = _errors_to_ru(ctx.errors)
-    elif not ctx.postback:
-        result["error"] = _to_ru("POSTBACK missing")
-    else:
-        result["POSTBACK"] = ctx.postback
+    success = bool(ctx.postback)
 
-    if headless_error and "error" not in result:
+    if success:
+        # Есть POSTBACK → всегда успех, любые ошибки игнорируем
+        result["POSTBACK"] = ctx.postback
+    elif ctx.errors:
+        # Ошибка только если успеха нет
+        result["error"] = _errors_to_ru(ctx.errors)
+    else:
+        # Ни успеха, ни явных ошибок
+        result["error"] = _to_ru("POSTBACK missing")
+
+    # headless_error НЕ ломает успех
+    if ("error" not in result) and (not success) and headless_error:
         result["error"] = _to_ru("bad headless value")
 
+    # Скриншот — только при ошибке
     if "error" in result and ctx.screenshot_path:
         result["screenshot"] = ctx.screenshot_path
 
+    # Логи итога
     result_state = "SUCCESS" if "error" not in result else "ERROR"
     logger.info("RESULT: %s", result_state)
     if "error" in result:
@@ -256,6 +270,7 @@ def send_result(
     else:
         logger.info("ИТОГ: Успех (POSTBACK получен)")
 
+    # Отправка вебхука (как и было), затем печать JSON в stdout
     if not ctx.browser_closed_manually:
         send_webhook(result, webhook_url, ctx)
     print(json.dumps(result, ensure_ascii=False))
@@ -1741,15 +1756,6 @@ if __name__ == "__main__":
 # ====================================================================================
 # Этап 8. Возврат данных во Flask (результаты выполнения)
 # ====================================================================================
-error_lines = []
-with open(ctx.log_file, encoding="utf-8") as f:
-    f.seek(ctx.log_start_pos)
-    for line in f:
-        if "[ERROR]" in line:
-            error_lines.append(line.strip())
-if error_lines and not ctx.errors:
-    ctx.errors = ["unexpected_error"]
-
 proxy_used = proxy_cfg is not None
 logger.info("proxy_used: %s", proxy_used)
 

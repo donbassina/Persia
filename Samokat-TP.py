@@ -7,9 +7,9 @@ import os
 import sys
 import time
 from datetime import datetime
-
 from pathlib import Path
 from random import SystemRandom
+import atexit
 
 import logging
 import requests
@@ -161,7 +161,9 @@ def normalize_phone(num: str) -> str:
 def send_webhook(result, webhook_url, ctx: RunContext):
     if webhook_url:
         e = None
-        for attempt in range(3):
+        # быстрее и мягче: максимум ~65 секунд вместо ~3 минут
+        backoff = [5, 15, 30]
+        for attempt, pause in enumerate(backoff, start=1):
             try:
                 resp = requests.post(
                     webhook_url, json=result, timeout=CFG["WEBHOOK_TIMEOUT"]
@@ -172,11 +174,12 @@ def send_webhook(result, webhook_url, ctx: RunContext):
             except Exception as exc:
                 e = exc
                 logger.warning(
-                    "webhook fail, retry %s in 60s: %s",
-                    attempt + 1,
+                    "webhook fail, retry %s in %ss: %s",
+                    attempt,
+                    pause,
                     e,
                 )
-                time.sleep(60)
+                time.sleep(pause)
         logger.error("webhook 3rd fail: %s", e)
 
 
@@ -399,24 +402,17 @@ if sys.stderr.encoding.lower() != "utf-8":
 # === P-6. Единый фильтр для блокировки «лишних» запросов ===
 async def should_abort(route, ctx: RunContext):
     """
-    Абортирует:
-      • любые ресурсы с resource_type in {"image", "media"}
-      • запросы, у которых в header-ах:
-            status 204/206  ИЛИ  Content-Length < 512
-    Всё остальное пропускает.
+    Минимальный безопасный фильтр:
+      • блокируем ресурсы с resource_type in {"image","media"}
+      • блокируем URL по CFG["BLOCK_PATTERNS"]
+    Никаких проверок «:status» и «content-length» на стадии запроса.
     """
     req = route.request
     r_type = req.resource_type
-    headers = req.headers
-    clen = int(headers.get("content-length", "1024"))
-    status = int(headers.get(":status", 200))
-
     url = req.url
-    must_abort = (
-        (r_type in ("image", "media"))
-        or (status in (204, 206))
-        or (clen < 512)
-        or any(p in url for p in CFG["BLOCK_PATTERNS"])
+
+    must_abort = (r_type in ("image", "media")) or any(
+        p in url for p in CFG["BLOCK_PATTERNS"]
     )
 
     if not must_abort:
@@ -424,13 +420,7 @@ async def should_abort(route, ctx: RunContext):
         return
 
     if not ctx.first_abort_logged:
-        logger.info(
-            "ABORT %s %s (%s, len≈%s)",
-            req.method,
-            req.url,
-            r_type,
-            headers.get("content-length", "?"),
-        )
+        logger.info("ABORT %s %s (%s)", req.method, req.url, r_type)
         ctx.first_abort_logged = True
 
     await route.abort()
@@ -450,7 +440,7 @@ async def get_form_position(page, selector="div.form-wrapper"):
     return {"top": box["y"], "center": box["y"] + box["height"] / 2}
 
 
-# ==== тайм-зона по крупным городам РФ ====
+# ==== тайм-зона по крупным городам РФ (без случайного сдвига) ====
 TZ_BY_CITY = {
     "Москва": "Europe/Moscow",
     "Санкт-Петербург": "Europe/Moscow",
@@ -470,22 +460,15 @@ TZ_BY_CITY = {
 }
 tz = TZ_BY_CITY.get(user_city, "Europe/Moscow")
 
-# === fingerprint values ===
-offset = _rnd.choice([-1, 0, 1])
-if offset == -1:
-    tz = "Europe/Kaliningrad"
-elif offset == 1:
-    tz = "Europe/Samara"
-else:
-    tz = "Europe/Moscow"
-
+# === fingerprint values (согласовано под Windows/Chrome) ===
 FP_PLATFORM = "Win32"
 FP_DEVICE_MEMORY = 8
 FP_HARDWARE_CONCURRENCY = 8
 FP_LANGUAGES = ["ru-RU", "ru"]
 FP_ACCEPT_LANGUAGE = "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
-FP_WEBGL_VENDOR = "Intel Inc."
-FP_WEBGL_RENDERER = "Intel Iris OpenGL Engine"
+# Ближе к реальному Chrome/Windows (ANGLE)
+FP_WEBGL_VENDOR = "Google Inc. (Intel)"
+FP_WEBGL_RENDERER = "ANGLE (Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0)"
 logger.info("Platform: %s", FP_PLATFORM)
 logger.info("Device Memory: %s", FP_DEVICE_MEMORY)
 logger.info("Hardware Concurrency: %s", FP_HARDWARE_CONCURRENCY)
@@ -1020,11 +1003,6 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
                     await asyncio.sleep(_rnd.uniform(0.4, 1.3))
 
 
-# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
-# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
-# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
-
-
 async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15.0):
     """
     Быстро прокручивает страницу так, чтобы центр формы оказался в центре экрана,
@@ -1125,11 +1103,6 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
         await human_scroll(int(remaining + jitter))
 
     await asyncio.sleep(0.25)
-
-
-# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
-# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
-# --- 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 ---
 
 
 # ====================================================================================
@@ -1241,7 +1214,7 @@ async def run_browser(ctx: RunContext):
             channel="chrome",
             args=[
                 "--incognito",
-                "--disable-gpu",
+                # убрали --disable-gpu, чтобы не конфликтовать с WebGL-спуфингом
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
             ],
@@ -1333,7 +1306,7 @@ if (window.WebGL2RenderingContext) {{
                     sys.exit(0)
                 raise
 
-            # Проверка на 503 ошибку
+            # Проверка на 503 ошибку (эвристика по тексту страницы)
             status = await page.evaluate("document.documentElement.innerText")
             if (
                 "503" in status
@@ -1501,6 +1474,7 @@ if (window.WebGL2RenderingContext) {{
                     modal_selector = selectors["form"]["thank_you"]
                     start_time = time.time()
 
+                    # ▼▼▼ Пункт (3) — оставлено как было: 2 клика + 3-й при таймауте ▼▼▼
                     try:
                         await ghost_click(submit_btn)
                         logger.info("[INFO] Первый клик по кнопке 'Оставить заявку'")
@@ -1535,6 +1509,7 @@ if (window.WebGL2RenderingContext) {{
                         await ghost_click(submit_btn)
                         logger.info("[INFO] Третий клик по кнопке 'Оставить заявку'")
                         success = await wait_for_event(start_time + 120)
+                    # ▲▲▲ пункт (3) сохранён без изменений ▲▲▲
 
                     # Зафиксировать редирект, если он уже засчитан механизмом ожидания
                     if not did_redirect:
@@ -1594,12 +1569,15 @@ async def main(ctx: RunContext):
     path = Path("selectors") / f"{profile}.yml"
     logger.info("selectors profile: %s file: %s", profile, path.resolve())
 
+    # единый глобальный таймаут берём из CFG
     await asyncio.wait_for(run_browser(ctx), timeout=CFG["RUN_TIMEOUT"])
 
 
 if __name__ == "__main__":
-    # ---- Идемпотентность: блокировка дубликатов по телефону ----
+    # ---- Идемпотентность: блокировка дубликатов по телефону (кроссплатформенная) ----
     run_main = True
+    lock_file_path: str | None = None
+    lock_fd: int | None = None
     try:
         import hashlib
         import ctypes
@@ -1615,34 +1593,86 @@ if __name__ == "__main__":
             ).hexdigest()
             mutex_name = f"Global\\samokat_{digest}"
 
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            CreateMutexW = kernel32.CreateMutexW
-            CreateMutexW.restype = wintypes.HANDLE
-            CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+            # Windows: mutex
+            is_windows = os.name == "nt"
+            duplicate = False
 
-            handle = CreateMutexW(None, True, mutex_name)
-            last_error = ctypes.get_last_error()
-            ERROR_ALREADY_EXISTS = 183
+            if is_windows:
+                try:
+                    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                    CreateMutexW = kernel32.CreateMutexW
+                    CreateMutexW.restype = wintypes.HANDLE
+                    CreateMutexW.argtypes = [
+                        wintypes.LPVOID,
+                        wintypes.BOOL,
+                        wintypes.LPCWSTR,
+                    ]
 
-            if not handle:
-                logger.warning(
-                    "CreateMutexW failed; proceeding without idempotency lock"
-                )
-            elif last_error == ERROR_ALREADY_EXISTS:
-                logger.info("Duplicate run blocked for phone: %s", norm_phone)
-                ctx.errors.append("duplicate_phone")
+                    handle = CreateMutexW(None, True, mutex_name)
+                    last_error = ctypes.get_last_error()
+                    ERROR_ALREADY_EXISTS = 183
+
+                    if not handle:
+                        logger.warning(
+                            "CreateMutexW failed; will try file lock fallback"
+                        )
+                    elif last_error == ERROR_ALREADY_EXISTS:
+                        logger.info("Duplicate run blocked for phone: %s", norm_phone)
+                        duplicate = True
+                except Exception as e:
+                    logger.warning("Idempotency (mutex) init failed: %s", e)
+
+            # Fallback (и Unix): файловая блокировка с O_EXCL
+            if not is_windows or not "handle" in locals() or not handle:
+                try:
+                    locks_dir = os.path.join(os.path.dirname(__file__), "Locks")
+                    os.makedirs(locks_dir, exist_ok=True)
+                    lock_file_path = os.path.join(locks_dir, f"samokat_{digest}.lock")
+                    flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
+                    lock_fd = os.open(lock_file_path, flags, 0o644)
+                    # записываем PID для отладки
+                    os.write(lock_fd, str(os.getpid()).encode("utf-8"))
+                except FileExistsError:
+                    logger.info("Duplicate run blocked (file lock) for phone: %s", norm_phone)
+                    duplicate = True
+                except Exception as e:
+                    logger.warning("File lock guard failed: %s", e)
+
+            if duplicate:
+                # регистрируем ошибку и пропускаем запуск
+                # (оставляем текущий формат: errors.append('duplicate_phone'))
+                try:
+                    ctx.errors.append("duplicate_phone")
+                except Exception:
+                    pass
                 run_main = False
+
+            # Авто-очистка file-lock при выходе
+            if lock_file_path and lock_fd is not None:
+
+                def _cleanup_lock():
+                    try:
+                        os.close(lock_fd)  # type: ignore[arg-type]
+                    except Exception:
+                        pass
+                    try:
+                        os.remove(lock_file_path)
+                    except Exception:
+                        pass
+
+                atexit.register(_cleanup_lock)
+
     except Exception as e:
         logger.warning("Idempotency init failed: %s", e)
 
-    # ---- Дальше существующий код: глобальный таймаут и перехваты ----
+    # ---- Дальше: единый глобальный таймаут из main(); убираем внешний 300s wait_for ----
     try:
         if run_main:
-            asyncio.run(asyncio.wait_for(main(ctx), timeout=300))
+            asyncio.run(main(ctx))
         else:
             logger.info("Skip main() due to duplicate_phone")
     except asyncio.TimeoutError:
-        logger.error("Global timeout 300s hit")
+        logger.error("Global timeout hit (CFG.RUN_TIMEOUT)")
         ctx.errors.append("unexpected_error")
     except RuntimeError as e:
         if str(e).startswith("selectors profile"):
@@ -1663,11 +1693,10 @@ if __name__ == "__main__":
         print(json.dumps(fatal, ensure_ascii=False))
         sys.exit(1)
 
+    # ====================================================================================
+    # Этап 8. Возврат данных во Flask (результаты выполнения)
+    # ====================================================================================
+    proxy_used = proxy_cfg is not None
+    logger.info("proxy_used: %s", proxy_used)
 
-# ====================================================================================
-# Этап 8. Возврат данных во Flask (результаты выполнения)
-# ====================================================================================
-proxy_used = proxy_cfg is not None
-logger.info("proxy_used: %s", proxy_used)
-
-send_result(ctx, user_phone, webhook_url, headless_error, proxy_used)
+    send_result(ctx, user_phone, webhook_url, headless_error, proxy_used)

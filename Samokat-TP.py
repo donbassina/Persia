@@ -158,6 +158,33 @@ def normalize_phone(num: str) -> str:
     return digits[-10:] if len(digits) >= 10 else digits
 
 
+
+
+# --- POSTBACK extraction (редактируй только эти 2 строки) ---
+POSTBACK_START = "utm_term="
+POSTBACK_END   = "&utm"        # None → до конца строки
+POSTBACK_FALLBACK = "Samokat"  # что вернуть, если start не найден
+
+def extract_postback_from_url(
+    url: str,
+    start: str = POSTBACK_START,
+    end: str | None = POSTBACK_END,
+    fallback: str = POSTBACK_FALLBACK,
+) -> str:
+    """Возвращает подстроку между start и end из URL.
+       Если start не найден — возвращает fallback (без декодирования)."""
+    try:
+        if start in url:
+            tail = url.split(start, 1)[1]
+            return tail.split(end, 1)[0] if end and (end in tail) else tail
+        return fallback
+    except Exception:
+        return fallback
+
+
+
+
+
 def send_webhook(result, webhook_url, ctx: RunContext):
     if webhook_url:
         e = None
@@ -1368,7 +1395,7 @@ if (window.WebGL2RenderingContext) {{
 
                 logger.info("[INFO] Ставим галочку политики через fill_policy_checkbox")
                 await fill_policy_checkbox(page, ctx)
-                await asyncio.sleep(4)
+                await asyncio.sleep(_rnd.uniform(0.1, 0.3))
 
                 logger.info(
                     "[INFO] Все поля формы заполнены и чекбокс отмечен. Ожидание завершено."
@@ -1392,7 +1419,7 @@ if (window.WebGL2RenderingContext) {{
             ctx.screenshot_path = path
             logger.info(f"[INFO] Скриншот формы сохранён: {ctx.screenshot_path}")
 
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(0.3)
 
             try:
                 values = await page.evaluate(
@@ -1458,23 +1485,27 @@ if (window.WebGL2RenderingContext) {{
                 url_before = page.url
                 did_redirect = False
                 thankyou_ok = False
-                scroll_step = _rnd.choice(
-                    [
-                        _rnd.randint(*CFG["SCROLL_STEP"]["down1"]),
-                        _rnd.randint(*CFG["SCROLL_STEP"]["down2"]),
-                    ]
-                )
-                current_y = await page.evaluate("window.scrollY")
-                new_y = current_y + scroll_step
-                await page.evaluate(f"window.scrollTo(0, {new_y})")
-                await asyncio.sleep(_rnd.uniform(0.7, 1.7))
+                await asyncio.sleep(_rnd.uniform(0.2, 0.4))
                 try:
                     old_url = page.url
-                    submit_btn = page.locator(selectors["form"]["submit"])
-                    modal_selector = selectors["form"]["thank_you"]
+
+                    # приоритетно берём ИМЕННО видимую кнопку с классом .btn_submit;
+                    # если её нет, падаем назад на селектор из профиля, но тоже только видимые
+                    btn_visible = page.locator("button.btn_submit:visible")
+                    if await btn_visible.count():
+                        submit_btn = btn_visible.last
+                    else:
+                        submit_btn = page.locator("form").locator(selectors["form"]["submit"] + ":visible").last
+
+                    modal_selector = (selectors.get("form", {}).get("thank_you", "html:not(:root)"))
                     start_time = time.time()
 
-                    # ▼▼▼ Пункт (3) — оставлено как было: 2 клика + 3-й при таймауте ▼▼▼
+                    # подготовка: гарантируем видимость кнопки и подводим курсор
+                    await submit_btn.scroll_into_view_if_needed()
+                    await submit_btn.wait_for(state="visible", timeout=4_000)
+                    await human_move_cursor(page, submit_btn, ctx)
+
+                    # ▼▼▼ Пункт (3) — 2 клика подряд (как было), третий — ниже по логике при таймауте ▼▼▼
                     try:
                         await ghost_click(submit_btn)
                         logger.info("[INFO] Первый клик по кнопке 'Оставить заявку'")
@@ -1486,6 +1517,8 @@ if (window.WebGL2RenderingContext) {{
                             e,
                         )
                         raise
+
+
 
                     async def wait_for_event(deadline: float) -> bool:
                         while True:
@@ -1526,17 +1559,13 @@ if (window.WebGL2RenderingContext) {{
                     el_thanks = await page.query_selector(modal_selector)
                     thankyou_ok = bool(el_thanks)
 
-                    from urllib.parse import urlparse, parse_qs
+                    
 
                     final_url = page.url
                     if success:
-                        parsed = urlparse(final_url)
-                        ctx.postback = parsed.path + (
-                            f"?{parsed.query}" if parsed.query else ""
-                        )
-                        qs = parse_qs(parsed.query)
-                        if "utm_term" in qs:
-                            logger.info("utm_term: %s", qs["utm_term"][0])
+                        term = extract_postback_from_url(final_url)
+                        ctx.postback = term
+                        logger.info("postback: %s", term or "<empty>")
                     else:
                         logger.error(
                             "Редирект или всплывающее окно 'Спасибо' не появилось"

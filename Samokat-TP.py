@@ -975,6 +975,75 @@ async def ghost_click(selector_or_element):
     await gc_click(selector_or_element)
 
 
+
+
+
+
+
+
+
+
+
+
+
+async def click_no_move_if_close(page, el, ctx: RunContext, threshold_px: int = 7):
+    """Клик через Ghost-cursor без прокладки траектории,
+    если курсор уже близко к центру кнопки."""
+    if GCURSOR is None:
+        raise RuntimeError("GCURSOR not initialized")
+
+    box = await el.bounding_box()
+    if not box:
+        # fallback: обычный ghost_click (пусть сам разбирается)
+        await ghost_click(el)
+        return
+
+    cx = box["x"] + box["width"] / 2
+    cy = box["y"] + box["height"] / 2
+
+    mx, my = getattr(ctx, "mouse_pos", (None, None))
+    # Если положение мыши нам неизвестно — безопаснее не двигать её вовсе
+    # и кликнуть по центру (через click_absolute, если он есть).
+    close_enough = False
+    if mx is None or my is None:
+        close_enough = True
+    else:
+        dx = (mx - cx)
+        dy = (my - cy)
+        dist = (dx * dx + dy * dy) ** 0.5
+        close_enough = dist <= threshold_px
+
+    if close_enough:
+        # Клик БЕЗ движения
+        if hasattr(GCURSOR, "click_absolute"):
+            await GCURSOR.click_absolute(cx, cy)
+        else:
+            await GCURSOR.click(None)  # клик в текущей позиции
+        # логически считаем, что курсор на центре
+        ctx.mouse_pos = (cx, cy)
+    else:
+        # Далеко — используем обычный путь с подводом
+        await ghost_click(el)  # внутри будет move + click
+        # после ghost_click курсор на центре; зафиксируем
+        ctx.mouse_pos = (cx, cy)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 async def human_move_cursor(page, el, ctx: RunContext):
     """Плавно ведёт курсор к случайной точке внутри элемента ``el``."""
     b = await el.bounding_box()
@@ -1555,11 +1624,18 @@ if (window.WebGL2RenderingContext) {{
                     await submit_btn.wait_for(state="visible", timeout=4_000)
                     await human_move_cursor(page, submit_btn, ctx)
 
-                    # ▼▼▼ Пункт (3) — 2 клика подряд (как было), третий — ниже по логике при таймауте ▼▼▼
+                    # два клика: 1-й обычный, 2-й без move если курсор близко
                     try:
                         await ghost_click(submit_btn)
                         logger.info("[INFO] Первый клик по кнопке 'Оставить заявку'")
-                        await ghost_click(submit_btn)
+
+                        _box = await submit_btn.bounding_box()
+                        if _box:
+                            _cx = _box["x"] + _box["width"] / 2
+                            _cy = _box["y"] + _box["height"] / 2
+                            ctx.mouse_pos = (_cx, _cy)
+
+                        await click_no_move_if_close(page, submit_btn, ctx, threshold_px=7)
                         logger.info("[INFO] Второй клик по кнопке 'Оставить заявку'")
                     except Exception as e:
                         logger.error(
@@ -1567,6 +1643,7 @@ if (window.WebGL2RenderingContext) {{
                             e,
                         )
                         raise
+
 
 
 
@@ -1589,7 +1666,7 @@ if (window.WebGL2RenderingContext) {{
 
                     success = await wait_for_event(start_time + 30)
                     if not success:
-                        await ghost_click(submit_btn)
+                        await click_no_move_if_close(page, submit_btn, ctx, threshold_px=7)
                         logger.info("[INFO] Третий клик по кнопке 'Оставить заявку'")
                         success = await wait_for_event(start_time + 120)
                     # ▲▲▲ пункт (3) сохранён без изменений ▲▲▲
@@ -1616,6 +1693,7 @@ if (window.WebGL2RenderingContext) {{
                         term = extract_postback_from_url(final_url)
                         ctx.postback = term
                         logger.info("postback: %s", term or "<empty>")
+                        await asyncio.sleep(_rnd.uniform(1.0, 4.0))
                     else:
                         logger.error(
                             "Редирект или всплывающее окно 'Спасибо' не появилось"

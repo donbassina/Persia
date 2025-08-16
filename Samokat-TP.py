@@ -70,7 +70,6 @@ async def gc_click(target):
     if GCURSOR is None:
         raise RuntimeError("GCURSOR not initialized")
     page = GCURSOR.page
-    el = None
     if isinstance(target, str):
         el = await page.query_selector(target)
     else:
@@ -79,12 +78,24 @@ async def gc_click(target):
     if box:
         x = box["x"] + box["width"] / 2
         y = box["y"] + box["height"] / 2
-        await gc_move(x, y)
-        if hasattr(GCURSOR, "click_absolute"):
-            await GCURSOR.click_absolute(x, y)
-        else:
-            await GCURSOR.click(None)
-        return
+        # ► Новая защита: пропускаем невалидные координаты
+        if not (math.isfinite(x) and math.isfinite(y)):
+            logger.warning(f"[WARN] skip gc_click invalid coords ({x}, {y}); fallback to el.click()")
+            await el.click()
+            return
+        # ► Пытаемся кликнуть через ghost-cursor; на ошибке — fallback
+        try:
+            await gc_move(x, y)
+            if hasattr(GCURSOR, "click_absolute"):
+                await GCURSOR.click_absolute(x, y)
+            else:
+                await GCURSOR.click(None)
+            return
+        except Exception as e:
+            logger.warning(f"[WARN] gc_click failed ({e}); fallback to el.click()")
+            await el.click()
+            return
+    # Нет box — кликаем нативно по селектору/элементу
     await GCURSOR.click(target if isinstance(target, str) else None)
 
 

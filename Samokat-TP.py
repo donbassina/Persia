@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+import math
 from datetime import datetime
 from pathlib import Path
 from random import SystemRandom
@@ -59,6 +60,9 @@ proxy_cfg: dict | None = None
 async def gc_move(x: float, y: float):
     if GCURSOR is None:
         raise RuntimeError("GCURSOR not initialized")
+    if not (math.isfinite(x) and math.isfinite(y)):
+        logger.debug(f"skip gc_move invalid coords ({x}, {y})")
+        return
     await GCURSOR.move_to({"x": x, "y": y})
 
 
@@ -158,12 +162,11 @@ def normalize_phone(num: str) -> str:
     return digits[-10:] if len(digits) >= 10 else digits
 
 
-
-
 # --- POSTBACK extraction (редактируй только эти 2 строки) ---
 POSTBACK_START = "utm_term="
-POSTBACK_END   = "&utm"        # None → до конца строки
+POSTBACK_END = "&utm"  # None → до конца строки
 POSTBACK_FALLBACK = "Samokat"  # что вернуть, если start не найден
+
 
 def extract_postback_from_url(
     url: str,
@@ -172,7 +175,7 @@ def extract_postback_from_url(
     fallback: str = POSTBACK_FALLBACK,
 ) -> str:
     """Возвращает подстроку между start и end из URL.
-       Если start не найден — возвращает fallback (без декодирования)."""
+    Если start не найден — возвращает fallback (без декодирования)."""
     try:
         if start in url:
             tail = url.split(start, 1)[1]
@@ -180,9 +183,6 @@ def extract_postback_from_url(
         return fallback
     except Exception:
         return fallback
-
-
-
 
 
 def send_webhook(result, webhook_url, ctx: RunContext):
@@ -897,17 +897,40 @@ async def human_type_city_autocomplete(page, selector: str, text: str, ctx: RunC
     logger.info(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}')
 
 
+async def _is_clickable(el, box=None):
+    try:
+        b = box or await el.bounding_box()
+        if not b:
+            return False
+        cx = b["x"] + b["width"] / 2
+        cy = b["y"] + b["height"] / 2
+        if not (math.isfinite(cx) and math.isfinite(cy)):
+            return False
+        return (
+            await el.is_visible()
+            and await el.is_enabled()
+            and await el.evaluate(
+                "(node, pos) => { const e = document.elementFromPoint(pos.x, pos.y); return e === node || node.contains(e); }",
+                {"x": cx, "y": cy},
+            )
+        )
+    except Exception:
+        return False
+
+
 async def ghost_click(selector_or_element):
     """Click element using ghost cursor with logging."""
     if GCURSOR is None:
         raise RuntimeError("GCURSOR not initialized")
     page = GCURSOR.page
-    el = None
-    if isinstance(selector_or_element, str):
-        el = await page.query_selector(selector_or_element)
-    else:
-        el = selector_or_element
-    box = await el.bounding_box() if el else None
+    el = (
+        await page.query_selector(selector_or_element)
+        if isinstance(selector_or_element, str)
+        else selector_or_element
+    )
+    if not el:
+        return
+    box = await el.bounding_box()
     if box:
         name = (
             await el.get_attribute("name")
@@ -922,7 +945,21 @@ async def ghost_click(selector_or_element):
         logger.info(
             f"[INFO] Курсор к {name} ({int(box['x']+box['width']/2)},{int(box['y']+box['height']/2)})"
         )
-    await gc_click(selector_or_element)
+    box = await el.bounding_box()
+    if box:
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+        if math.isfinite(cx) and math.isfinite(cy) and await _is_clickable(el, box):
+            try:
+                await gc_move(cx, cy)
+                if hasattr(GCURSOR, "click_absolute"):
+                    await GCURSOR.click_absolute(cx, cy)
+                else:
+                    await GCURSOR.click(None)
+                return
+            except Exception as e:
+                logger.warning(f"[WARN] ghost click failed: {e}")
+    await el.click()
 
 
 async def human_move_cursor(page, el, ctx: RunContext):
@@ -930,8 +967,16 @@ async def human_move_cursor(page, el, ctx: RunContext):
     b = await el.bounding_box()
     if not b:
         return
-    target_x = b["x"] + _rnd.uniform(8, b["width"] - 8)
-    target_y = b["y"] + _rnd.uniform(8, b["height"] - 8)
+    target_x = (
+        b["x"] + b["width"] / 2
+        if b["width"] < 16
+        else b["x"] + _rnd.uniform(8, b["width"] - 8)
+    )
+    target_y = (
+        b["y"] + b["height"] / 2
+        if b["height"] < 16
+        else b["y"] + _rnd.uniform(8, b["height"] - 8)
+    )
 
     if GCURSOR is None:
         raise RuntimeError("GCURSOR not initialized")
@@ -1495,9 +1540,15 @@ if (window.WebGL2RenderingContext) {{
                     if await btn_visible.count():
                         submit_btn = btn_visible.last
                     else:
-                        submit_btn = page.locator("form").locator(selectors["form"]["submit"] + ":visible").last
+                        submit_btn = (
+                            page.locator("form")
+                            .locator(selectors["form"]["submit"] + ":visible")
+                            .last
+                        )
 
-                    modal_selector = (selectors.get("form", {}).get("thank_you", "html:not(:root)"))
+                    modal_selector = selectors.get("form", {}).get(
+                        "thank_you", "html:not(:root)"
+                    )
                     start_time = time.time()
 
                     # подготовка: гарантируем видимость кнопки и подводим курсор
@@ -1517,8 +1568,6 @@ if (window.WebGL2RenderingContext) {{
                             e,
                         )
                         raise
-
-
 
                     async def wait_for_event(deadline: float) -> bool:
                         while True:
@@ -1558,8 +1607,6 @@ if (window.WebGL2RenderingContext) {{
 
                     el_thanks = await page.query_selector(modal_selector)
                     thankyou_ok = bool(el_thanks)
-
-                    
 
                     final_url = page.url
                     if success:
@@ -1652,7 +1699,7 @@ if __name__ == "__main__":
                     logger.warning("Idempotency (mutex) init failed: %s", e)
 
             # Fallback (и Unix): файловая блокировка с O_EXCL
-            if not is_windows or not "handle" in locals() or not handle:
+            if not is_windows or "handle" not in locals() or not handle:
                 try:
                     locks_dir = os.path.join(os.path.dirname(__file__), "Locks")
                     os.makedirs(locks_dir, exist_ok=True)
@@ -1662,7 +1709,9 @@ if __name__ == "__main__":
                     # записываем PID для отладки
                     os.write(lock_fd, str(os.getpid()).encode("utf-8"))
                 except FileExistsError:
-                    logger.info("Duplicate run blocked (file lock) for phone: %s", norm_phone)
+                    logger.info(
+                        "Duplicate run blocked (file lock) for phone: %s", norm_phone
+                    )
                     duplicate = True
                 except Exception as e:
                     logger.warning("File lock guard failed: %s", e)

@@ -304,7 +304,7 @@ def send_result(
     if "error" in result:
         logger.info("ИТОГ: %s", result["error"])
     else:
-        logger.info("ИТОГ: Успех (POSTBACK получен)")
+        logger.info("POSTBACK получен")
 
     # Отправка вебхука (как и было), затем печать JSON в stdout
     if not ctx.browser_closed_manually:
@@ -364,20 +364,36 @@ try:
         json_headless=ctx_json_headless,
     )
     file_handler = logging.FileHandler(ctx.log_file, encoding="utf-8")
-    file_handler.setFormatter(
-        logging.Formatter(
-            "[%(asctime)s] %(levelname)s %(name)s – %(message)s",
-            datefmt="%H:%M:%S",
-        )
-    )
-    logger.addHandler(file_handler)
+    file_handler.setFormatter(logging.Formatter(
+        "[%(asctime)s] %(levelname)s %(name)s – %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+
+    # --- de-dup handlers & stop propagation ---
+    logger.propagate = False
+    abs_log = os.path.abspath(ctx.log_file)
+
+    # убрать уже подвешенные FileHandler к тому же файлу
+    for h in list(logger.handlers):
+        if isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == abs_log:
+            logger.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+
+    # повесить РОВНО один FileHandler
+    if not any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == abs_log
+               for h in logger.handlers):
+        logger.addHandler(file_handler)
+
         # --- console highlight: green background for SUCCESS line ---
     try:
         from colorama import init as _cinit, Fore, Back, Style
         _cinit()
 
         class _GreenBGFormatter(logging.Formatter):
-            PATS = ("RESULT: SUCCESS", "ИТОГ: Успех")
+            PATS = ("RESULT: SUCCESS", "---")
             def format(self, record: logging.LogRecord) -> str:
                 s = super().format(record)
                 try:

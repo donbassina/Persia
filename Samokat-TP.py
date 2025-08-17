@@ -64,31 +64,34 @@ async def gc_move(x: float, y: float):
 
 
 async def gc_click(target):
-    """(п.4) Безопасный клик: не передаём строку в GCURSOR.click;
-    если элемента нет/bbox нет — пробуем клик по самому элементу, иначе по текущей позиции."""
+    """Клик строго через Ghost-cursor: скроллим в видимую область, берём bbox, подводим, кликаем."""
     if GCURSOR is None:
         raise RuntimeError("GCURSOR not initialized")
     page = GCURSOR.page
-    el = None
-    if isinstance(target, str):
-        el = await page.query_selector(target)
-    else:
-        el = target
-    box = await el.bounding_box() if el else None
-    if box:
-        x = box["x"] + box["width"] / 2
-        y = box["y"] + box["height"] / 2
-        await gc_move(x, y)
-        if hasattr(GCURSOR, "click_absolute"):
-            await GCURSOR.click_absolute(x, y)
-        else:
-            await GCURSOR.click(None)
+    el = await page.query_selector(target) if isinstance(target, str) else target
+    if not el:
+        logger.warning("gc_click: element not found for %r", target)
         return
-    # fallback: если элемента нет/нет bbox — делаем нативный клик по элементу; иначе клик в текущей позиции
-    if el:
-        await el.click()
+
+    # всегда стараемся сделать элемент видимым
+    with suppress(Exception):
+        await el.scroll_into_view_if_needed()
+        await asyncio.sleep(_rnd.uniform(0.03, 0.08))
+
+    box = await el.bounding_box()
+    if not box:
+        logger.warning("gc_click: no bbox for %r", target)
+        return
+
+    x = box["x"] + box["width"] / 2
+    y = box["y"] + box["height"] / 2
+    await gc_move(x, y)
+    if hasattr(GCURSOR, "click_absolute"):
+        await GCURSOR.click_absolute(x, y)
     else:
+        # остаётся Ghost-cursor, но по уже подведённой позиции
         await GCURSOR.click(None)
+
 
 
 async def gc_wheel(delta_y: float):
@@ -902,7 +905,10 @@ async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
             item_sel = selectors["form"]["courier_item"]
-            await page.locator(item_sel).get_by_text(courier_type, exact=True).click()
+            option = page.locator(item_sel).get_by_text(courier_type, exact=True)
+            await human_move_cursor(page, option, ctx)
+            await ghost_click(option)
+
             return True
         except Exception as e:
             logger.warning(

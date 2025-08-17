@@ -1,6 +1,6 @@
 # Updated selectors for production landing form
 form:
-  wrapper: "div.form-wrapper"
+  wrapper: 'div.form-wrapper'
   submit: 'button[type="submit"]'
   name: 'input[name="user_name"]'
   city: 'div.form-wrapper input[name="user_city"]:not(.calculator-list-field-input)'
@@ -12,3 +12,4 @@ form:
   city_item: 'div.form-wrapper .form-list-item'
   gender_item: '.form-list-item'
   courier_item: '.form-list-item'
+  thank_you: '.modal-message-content:visible:has-text("Спасибо"), .modal-message-text:visible:has-text("Спасибо")'

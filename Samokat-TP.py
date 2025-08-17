@@ -125,7 +125,7 @@ async def human_scroll(total_px: int):
         if _rnd.random() < 0.14:
             await gc_wheel(-direction * _rnd.randint(0, 0))
         if _rnd.random() < 0.35:
-            await asyncio.sleep(_rnd.uniform(1.25, 3.2))  # короче паузы (п.20)
+            await asyncio.sleep(_rnd.uniform(1.25, 3.2))  # умеренные паузы
 
 
 async def drag_scroll(total_px: int):
@@ -267,7 +267,7 @@ def send_result(
     headless_error: bool,
     proxy_used: bool,
 ) -> None:
-    """Финальный JSON/вебхук. Успех = есть ctx.postback."""
+    """Финальный JSON/вебхук. Успех = есть ctx.postback (реально извлечённый POSTBACK)."""
     result: dict[str, str] = {"phone": phone}
     success = bool(ctx.postback)
 
@@ -442,13 +442,9 @@ except Exception as e:
     print(f"[ERROR] Не удалось получить JSON из stdin: {e}")
     sys.exit(1)
 
-# === Load configuration values ===
-# Configuration values are read directly from CFG at call sites
-
-# Дополнительные параметры из полученного JSON
+# === Доп. параметры из JSON ===
 def _as_str(v) -> str:
     return "" if v is None else str(v)
-
 
 phone_from_Avito = _as_str(params.get("phone_from_Avito", ""))
 phone_for_form = phone_from_Avito if phone_from_Avito else _as_str(user_phone)
@@ -461,10 +457,10 @@ user_gender = _as_str(params.get("user_gender", ""))
 user_courier_type = _as_str(params.get("user_courier_type", ""))
 
 _enc = sys.stdout.encoding
-if not _enc or _enc.lower() != "utf-8":  # п.2
+if not _enc or _enc.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 _enc = sys.stderr.encoding
-if not _enc or _enc.lower() != "utf-8":  # п.2
+if not _enc or _enc.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8")
 
 
@@ -474,15 +470,19 @@ async def should_abort(route, ctx: RunContext, allow_host: str | None = None):
     Минимальный безопасный фильтр:
       • блокируем ресурсы с resource_type in {"image","media"}, КРОМЕ основного хоста лендинга (п.9)
       • блокируем URL по CFG["BLOCK_PATTERNS"] (подстраховано исключением allow_host) (п.15)
+      • пропускаем картинки с хостов из CFG["ALLOW_IMAGE_HOSTS"]
     """
     req = route.request
     r_type = req.resource_type
     url = req.url
     host = urlparse(url).hostname or ""
 
-    # не рубим медиа/картинки для основного хоста
+    # allowlist для изображений/CDN
+    allow_image_hosts = set(CFG.get("ALLOW_IMAGE_HOSTS", []) or [])
+
+    # не рубим медиа/картинки для основного хоста и для allowlist
     block_by_type = (r_type in ("image", "media")) and (
-        allow_host is None or host != allow_host
+        (allow_host is None or host != allow_host) and (host not in allow_image_hosts)
     )
 
     def _match_pattern(p: str) -> bool:
@@ -622,6 +622,7 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
             await inp.fill("")
             target_len = max(2, int(len(city) * 0.75))
             typed = ""
+            picked = False
             for ch in city:
                 await human_type_city_autocomplete(page, selectors["form"]["city"], ch, ctx)
                 typed += ch
@@ -635,26 +636,42 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
                 await asyncio.sleep(_rnd.uniform(0.06, 0.12))
                 lst = page.locator(list_sel_visible)
                 prev_cnt = -1
+                cnt = 0
                 for _ in range(15):
                     cnt = await lst.count()
                     if cnt > 0 and cnt != prev_cnt:
                         break
                     prev_cnt = cnt
                     await asyncio.sleep(0.06)
-                else:
-                    raise ValueError("dropdown no change")
-                if len(typed) >= target_len and cnt <= 4:
-                    options = [(await lst.nth(i).inner_text()).strip() for i in range(cnt)]
+
+                if len(typed) >= target_len and cnt > 0:
+                    # 1) Пытаемся выбрать точное совпадение
+                    options = [(await lst.nth(i).inner_text()).strip() for i in range(min(cnt, 20))]
                     if city in options:
                         idx = options.index(city)
                         item = lst.nth(idx)
                         await human_move_cursor(page, item, ctx)
                         await ghost_click(item)
                         await asyncio.sleep(_rnd.uniform(0.03, 0.06))
-                        if (await inp.input_value()).strip() == city.strip():
-                            return True
-                        raise ValueError("value mismatch after click")
-            raise ValueError(f"{city} not found")
+                        picked = True
+                        break
+                    # 2) Если точного нет — выбираем первый элемент как fallback
+                    item = lst.first
+                    await human_move_cursor(page, item, ctx)
+                    await ghost_click(item)
+                    await asyncio.sleep(_rnd.uniform(0.03, 0.06))
+                    picked = True
+                    break
+
+            if not picked:
+                # 3) финальный fallback — Enter в инпут (если автокомплит поддерживает)
+                await page.keyboard.press("Enter")
+                await asyncio.sleep(_rnd.uniform(0.05, 0.12))
+
+            # проверка значения
+            if (await inp.input_value()).strip():
+                return True
+            raise ValueError(f"{city} not selected")
         except Exception as e:
             logger.warning("fill_city attempt %s failed: %s", attempt + 1, e)
     logger.error("Не удалось выбрать город")
@@ -1171,7 +1188,7 @@ async def smooth_scroll_to_form(page, ctx: RunContext):
 
 
 async def _apply_stealth(context, page):
-    """Совместимость разных версий playwright-stealth (п.8)."""
+    """Совместимость разных версий playwright-stealth."""
     try:
         await stealth.Stealth().apply_stealth_async(context)  # 2.x API
         return
@@ -1213,7 +1230,7 @@ def _set_cursor_speed(cur, vmin=1750, vmax=2200):
             pass
 
 
-# ========= НОВОЕ: универсальный детектор успеха после submit =========
+# ========= Универсальный детектор успеха после submit =========
 async def _wait_submit_result(context, page, submit_btn, modal_selector: str, ctx: RunContext,
                               first_wait: float = 30.0, second_wait: float = 120.0):
     """
@@ -1223,7 +1240,6 @@ async def _wait_submit_result(context, page, submit_btn, modal_selector: str, ct
       • появление текста 'спасибо'/'thank you' на странице,
       • новая вкладка (popup) в контексте или через page.popup,
       • закрытие исходной вкладки и появление новой активной.
-
     Возвращает (success: bool, active_page: Page|None).
     """
     def ms(sec: float) -> int: return int(sec * 1000)
@@ -1237,7 +1253,6 @@ async def _wait_submit_result(context, page, submit_btn, modal_selector: str, ct
     task_page_popup = asyncio.create_task(page.wait_for_event("popup"))
 
     async def _cleanup_popup_waiters():
-        # Корректно отменяем и дожидаемся, чтобы не было "Task exception was never retrieved"
         for t in (task_ctx_popup, task_page_popup):
             if not t.done():
                 t.cancel()
@@ -1330,7 +1345,6 @@ async def _wait_submit_result(context, page, submit_btn, modal_selector: str, ct
         )
         for t in pending:
             t.cancel()
-        # ВАЖНО: дождаться pending, чтобы не было "Task exception was never retrieved"
         if pending:
             try:
                 await asyncio.gather(*pending, return_exceptions=True)
@@ -1370,7 +1384,7 @@ async def _wait_submit_result(context, page, submit_btn, modal_selector: str, ct
         await _cleanup_popup_waiters()
         return True, active
 
-    # повторный клик при необходимости
+    # повторный клик при необходимости (без движения, если близко)
     with suppress(Exception):
         if active and (not active.is_closed()) and active == page:
             await click_no_move_if_close(active, submit_btn, ctx, threshold_px=7)
@@ -1389,16 +1403,29 @@ async def run_browser(ctx: RunContext):
             ctx.json_headless if ctx.json_headless is not None else CFG["HEADLESS"]
         )
 
-        browser = await p.chromium.launch(
-            proxy=proxy_cfg if proxy_cfg else None,
-            headless=headless,
-            channel="chrome",
-            args=[
-                "--incognito",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ],
-        )
+        # Fallback: если нет установленного Chrome
+        try:
+            browser = await p.chromium.launch(
+                proxy=proxy_cfg if proxy_cfg else None,
+                headless=headless,
+                channel="chrome",
+                args=[
+                    "--incognito",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
+        except Exception as e:
+            logger.warning("Chrome channel launch failed (%s). Fallback to default Chromium.", e)
+            browser = await p.chromium.launch(
+                proxy=proxy_cfg if proxy_cfg else None,
+                headless=headless,
+                args=[
+                    "--incognito",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
 
         context = await browser.new_context(
             user_agent=CFG["UA"],
@@ -1479,7 +1506,7 @@ if (window.WebGL2RenderingContext) {{
                 error_msg = (
                     f"Timeout {CFG['PAGE_GOTO_TIMEOUT'] // 1000} сек. при загрузке лендинга"
                 )
-                logger.error(f" {error_msg}")
+                logger.error(f"{error_msg}")
                 raise
             except PlaywrightError as e:
                 if "has been closed" in str(e) or "TargetClosedError" in str(e):
@@ -1487,15 +1514,18 @@ if (window.WebGL2RenderingContext) {{
                     sys.exit(0)
                 raise
 
-            # Проверка на 503
-            status = await page.evaluate("document.documentElement.innerText")
+            # Проверка на 503 (легковесная)
+            try:
+                status_head = await page.evaluate("(d=> (d.innerText||'').slice(0,2048)) (document.documentElement)")
+            except Exception:
+                status_head = ""
             if (
-                "503" in status
-                or "Сервис временно недоступен" in status
-                or "Service Unavailable" in status
+                "503" in status_head
+                or "Сервис временно недоступен" in status_head
+                or "Service Unavailable" in status_head
             ):
                 error_msg = "Ошибка 503: сайт временно недоступен"
-                logger.error(f" {error_msg}")
+                logger.error(f"{error_msg}")
                 raise Exception(error_msg)
 
             try:
@@ -1504,7 +1534,7 @@ if (window.WebGL2RenderingContext) {{
                 )
                 logger.info("[INFO] Контент формы загружен (div.form-wrapper найден)")
             except Exception as e:
-                logger.warning(f" div.form-wrapper не найден: {e}")
+                logger.warning(f"div.form-wrapper не найден: {e}")
 
             load_ms = await page.evaluate(
                 "() => { const t = performance.timing; return (t.loadEventEnd || t.domContentLoadedEventEnd) - t.navigationStart; }"
@@ -1549,9 +1579,9 @@ if (window.WebGL2RenderingContext) {{
                 await fill_policy_checkbox(page, ctx)
                 await asyncio.sleep(_rnd.uniform(0.1, 0.3))
 
-                logger.info("[INFO] Все поля формы заполнены и чекбокс отмечен. Ожидание завершено.")
+                logger.info("[INFO] Все поля формы заполнены и чекбокс отмечен.")
             except Exception as e:
-                logger.error(f" Ошибка на этапе заполнения формы: {e}")
+                logger.error(f"Ошибка на этапе заполнения формы: {e}")
 
             # ====================================================================================
             # Этап 5. Скриншот формы после заполнения и проверка заполненности
@@ -1612,7 +1642,7 @@ if (window.WebGL2RenderingContext) {{
                     ctx.errors = []
                     error_msg = ""
             except Exception as e:
-                logger.error(f" Ошибка при проверке/скриншоте: {e}")
+                logger.error(f"Ошибка при проверке/скриншоте: {e}")
                 error_msg = str(e)
 
             if error_msg:
@@ -1632,8 +1662,10 @@ if (window.WebGL2RenderingContext) {{
                             .last
                         )
 
+                    # разумный дефолт на случай пустого в профиле
                     modal_selector = (
-                        selectors.get("form", {}).get("thank_you", "html:not(:root)")
+                        (selectors.get("form", {}) or {}).get("thank_you")
+                        or ".thank-you, .modal-thanks, [data-thanks], .ty, .thanks, .popup-thanks"
                     )
 
                     success, active_page = await _wait_submit_result(
@@ -1647,10 +1679,34 @@ if (window.WebGL2RenderingContext) {{
                         final_url = final_page.url
 
                     if success:
-                        term = extract_postback_from_url(final_url) if final_url else POSTBACK_FALLBACK
-                        ctx.postback = term
-                        logger.info("postback: %s", term or "<empty>")
-                        await asyncio.sleep(_rnd.uniform(1.0, 4.0))
+                        # Успех засчитываем ТОЛЬКО если реально извлекли postback (без использования fallback)
+                        term = ""
+                        if final_url:
+                            term = extract_postback_from_url(final_url)
+                            if term == POSTBACK_FALLBACK:
+                                term = ""
+                        if not term:
+                            # альтернативные источники postback: скрытые поля/мета/атрибуты
+                            try:
+                                term = await final_page.evaluate("""
+                                    () => {
+                                      const byQS = (sel)=>document.querySelector(sel);
+                                      const v = byQS('input[name="utm_term"]')?.value
+                                            || byQS('[data-postback]')?.getAttribute('data-postback')
+                                            || byQS('meta[name="utm_term"]')?.content
+                                            || '';
+                                      return v || '';
+                                    }
+                                """)
+                            except Exception:
+                                term = ""
+                        if term:
+                            ctx.postback = term
+                            logger.info("postback: %s", term or "<empty>")
+                            await asyncio.sleep(_rnd.uniform(1.0, 4.0))
+                        else:
+                            logger.error("Редирект/модалка были, но POSTBACK не извлечён")
+                            ctx.errors.append("POSTBACK missing")
                     else:
                         logger.error("Редирект или всплывающее окно 'Спасибо' не появилось")
                         ctx.errors.append("thankyou_timeout")

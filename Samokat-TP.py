@@ -610,7 +610,7 @@ async def fill_full_name(page, name: str, ctx: RunContext, retries: int = 3) -> 
 
             # ► СКРОЛЛ, если нужно, чтобы поле оказалось в видимой зоне
             await _scroll_if_needed(
-                input_box, dropdown_room=150, step_range=(300, 420)
+                input_box, dropdown_room=150, step_range=(140, 150)
             )  # room≈высота клавиатуры
 
             await human_move_cursor(page, input_box, ctx)
@@ -655,7 +655,7 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
             inp = page.locator(selectors["form"]["city"])
 
             # 1) скроллим, если под полем < 260 px
-            await _scroll_if_needed(inp, dropdown_room=260, step_range=(280, 300))
+            await _scroll_if_needed(inp, dropdown_room=260, step_range=(110, 120))
 
             # 2) курсор, клик, очистка
             await human_move_cursor(page, inp, ctx)
@@ -780,20 +780,37 @@ async def fill_phone(page, phone: str, ctx: RunContext, retries: int = 3) -> boo
 # ─── helpers ──────────────────────────────────────────────────────────
 async def _tiny_scroll_once(px: int) -> None:
     """
-    «Человечный» короткий скролл на ±px px.
-    Делим общий шаг на 2-4 подшажка (40-70 px каждый) с микропаузами,
-    чтобы глаз видел естественную прокрутку колёсиком.
+    «Человечный» короткий скролл на ±px px, как в human_scroll:
+    логнормальные шаги, инерционный «докат», микро-джиттер и короткие паузы.
     """
     if GCURSOR is None:
         raise RuntimeError("GCURSOR not initialized")
 
     direction = 1 if px > 0 else -1
     remain = abs(px)
+
+    # ограничим максимальный «крупный» шаг, чтобы рядом с инпутами не уезжать
+    MAX_STEP = 120  # можно 90–140 по вкусу
+
     while remain > 0:
-        step = min(_rnd.randint(40, 70), remain)  # 40-70 px
+        # базовый «человечный» шаг
+        step = min(int(_rnd.lognormvariate(3.6, 0.35)), remain, MAX_STEP)
         await GCURSOR.wheel(0, direction * step)
+
+        # инерционный докат (экспоненциально убывающие подпульсы)
+        v = step
+        while v > 4:
+            v = int(v * 0.72)
+            await GCURSOR.wheel(0, direction * v)
+            await asyncio.sleep(_rnd.uniform(0.012, 0.028))
+
         remain -= step
-        await asyncio.sleep(_rnd.uniform(0.04, 0.08))
+
+        # микро-джиттер и короткая пауза, но без длинных «задумчивостей»
+        if _rnd.random() < 0.12:
+            await GCURSOR.wheel(0, -direction * _rnd.randint(0, 6))
+        await asyncio.sleep(_rnd.uniform(0.05, 0.12))
+
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -840,7 +857,7 @@ async def fill_gender(page, gender: str, ctx: RunContext, retries: int = 3) -> b
     for attempt in range(retries):
         try:
             # ► тот же универсальный скролл
-            await _scroll_if_needed(input_box, dropdown_room=220, step_range=(190, 200))
+            await _scroll_if_needed(input_box, dropdown_room=220, step_range=(110, 120))
 
             # открыть список
             await human_move_cursor(page, input_box, ctx)
@@ -1583,9 +1600,7 @@ async def _wait_submit_result(context, page, submit_btn, modal_selector: str, ct
 
 async def run_browser(ctx: RunContext):
     async with async_playwright() as p:
-        headless = (
-            ctx.json_headless if ctx.json_headless is not None else CFG["HEADLESS"]
-        )
+        headless = (ctx.json_headless if ctx.json_headless is not None else False)
 
         browser = await p.chromium.launch(
             proxy=proxy_cfg if proxy_cfg else None,

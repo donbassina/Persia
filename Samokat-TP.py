@@ -54,7 +54,7 @@ GCURSOR: GhostCursor | None = None
 # selectors loaded from YAML profile in ``main``
 # default profile path: selectors/default.yml
 selectors: dict | None = None
-proxy_cfg: dict | None = None
+proxy_cfg: dict | None = None  # unused global; per-run proxy is stored in ctx
 
 
 async def gc_move(x: float, y: float):
@@ -76,7 +76,7 @@ async def gc_click(target):
     # всегда стараемся сделать элемент видимым
     with suppress(Exception):
         await el.scroll_into_view_if_needed()
-        await asyncio.sleep(_rnd.uniform(0.03, 0.08))
+        await asyncio.sleep(_rnd.uniform(0.01, 0.03))
 
     box = await el.bounding_box()
     if not box:
@@ -129,8 +129,8 @@ async def human_scroll(total_px: int):
         remain -= step
         if _rnd.random() < 0.14:
             await gc_wheel(-direction * _rnd.randint(0, 0))
-        if _rnd.random() < 0.35:
-            await asyncio.sleep(_rnd.uniform(1.25, 4.9))
+        if _rnd.random() < 0.12:
+            await asyncio.sleep(_rnd.uniform(0.18, 0.45))
 
 
 async def drag_scroll(total_px: int):
@@ -272,6 +272,70 @@ def _errors_to_ru(err_list: list[str]) -> str:
     return ", ".join(_to_ru(e) for e in err_list)
 
 
+
+
+
+
+
+
+
+
+
+def _append_run_result_from_log(log_path: str, out_txt_path: str) -> None:
+    """
+    Читает «хвост» лог-файла и ищет последний RESULT: SUCCESS/ERROR.
+    В зависимости от результата дописывает одну строку в out_txt_path.
+    """
+    try:
+        # читаем хвост файла (≈8 КБ)
+        tail = ""
+        with open(log_path, "rb") as f:
+            try:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - 8192))
+                tail = f.read().decode("utf-8", errors="ignore")
+            except Exception:
+                f.seek(0)
+                tail = f.read().decode("utf-8", errors="ignore")
+
+        i_succ = tail.rfind("RESULT: SUCCESS")
+        i_err  = tail.rfind("RESULT: ERROR")
+
+        if i_succ == i_err == -1:
+            # если по какой-то причине сигнатура не найдена — считаем ошибкой
+            state = "ERROR"
+        else:
+            state = "SUCCESS" if i_succ > i_err else "ERROR"
+
+        line = "Самокат: Лидок в коробочке" if state == "SUCCESS" else "Самокат: Лидок хуёк"
+
+        os.makedirs(os.path.dirname(out_txt_path), exist_ok=True)
+        with open(out_txt_path, "a", encoding="utf-8") as out:
+            out.write(line + "\n")
+
+        logger.info("Run outcome appended to %s (%s)", out_txt_path, state)
+    except Exception as e:
+        logger.warning("append_run_result_from_log failed: %s", e)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def send_result(
     ctx: RunContext,
     phone: str,
@@ -293,16 +357,15 @@ def send_result(
     if success:
         # Есть POSTBACK → всегда успех, любые ошибки игнорируем
         result["POSTBACK"] = ctx.postback
-    elif ctx.errors:
-        # Ошибка только если успеха нет
-        result["error"] = _errors_to_ru(ctx.errors)
     else:
-        # Ни успеха, ни явных ошибок
-        result["error"] = _to_ru("POSTBACK missing")
-
-    # headless_error НЕ ломает успех
-    if ("error" not in result) and (not success) and headless_error:
-        result["error"] = _to_ru("bad headless value")
+        # Нет успеха → формируем причину
+        if ctx.errors:
+            result["error"] = _errors_to_ru(ctx.errors)
+        elif headless_error:
+            # headless_error НЕ ломает успех, но если успеха нет и других ошибок нет — отдадим его
+            result["error"] = _to_ru("bad headless value")
+        else:
+            result["error"] = _to_ru("POSTBACK missing")
 
     # Скриншот — только при ошибке
     if "error" in result and ctx.screenshot_path:
@@ -320,6 +383,12 @@ def send_result(
     if not ctx.browser_closed_manually:
         send_webhook(result, webhook_url, ctx)
     print(json.dumps(result, ensure_ascii=False))
+
+    # После вебхука: зафиксировать результат запуска в txt на основе логов
+    try:
+        _append_run_result_from_log(ctx.log_file, RUN_RESULTS_TXT)
+    except Exception as e:
+        logger.warning("append runs file failed: %s", e)
 
 
 try:
@@ -438,13 +507,15 @@ try:
     if proxy_url:
         try:
             parsed = parse_proxy(proxy_url)
-            proxy_cfg = {
+            _proxy_cfg = {
                 "server": f"{parsed['scheme']}://{parsed['host']}:{parsed['port']}"
             }
             if parsed.get("user"):
-                proxy_cfg["username"] = parsed["user"]
+                _proxy_cfg["username"] = parsed["user"]
             if parsed.get("password"):
-                proxy_cfg["password"] = parsed["password"]
+                _proxy_cfg["password"] = parsed["password"]
+            # store proxy configuration in context to avoid global state
+            ctx.proxy_cfg = _proxy_cfg
         except ProxyError:
             logger.error("bad_proxy_format")
             fatal = {"phone": user_phone, "error": "bad_proxy_format"}
@@ -518,6 +589,7 @@ async def should_abort(route, ctx: RunContext):
 
 # Основная рабочая директория
 WORK_DIR = os.path.dirname(__file__)
+RUN_RESULTS_TXT = os.path.join(WORK_DIR, "Logs", "run_results.txt")
 
 
 async def get_form_position(page, selector="div.form-wrapper"):
@@ -530,25 +602,123 @@ async def get_form_position(page, selector="div.form-wrapper"):
     return {"top": box["y"], "center": box["y"] + box["height"] / 2}
 
 
-# ==== тайм-зона по крупным городам РФ (без случайного сдвига) ====
-TZ_BY_CITY = {
-    "Москва": "Europe/Moscow",
-    "Санкт-Петербург": "Europe/Moscow",
-    "Нижний Новгород": "Europe/Moscow",
-    "Казань": "Europe/Moscow",
-    "Воронеж": "Europe/Moscow",
-    "Ростов-на-Дону": "Europe/Moscow",
-    "Волгоград": "Europe/Volgograd",
-    "Самара": "Europe/Samara",  # UTC+4
-    "Екатеринбург": "Asia/Yekaterinburg",  # UTC+5
-    "Челябинск": "Asia/Yekaterinburg",
-    "Уфа": "Asia/Yekaterinburg",
-    "Пермь": "Asia/Yekaterinburg",
-    "Омск": "Asia/Omsk",  # UTC+6
-    "Новосибирск": "Asia/Novosibirsk",  # UTC+7
-    "Красноярск": "Asia/Krasnoyarsk",
+# ==== Тайм-зона по городу (мягкое сопоставление + дефолт Москва) ====
+
+def _norm_city(name: str) -> str:
+    """Нормализует строку города: нижний регистр, замена ё→е, убираем пунктуацию/служебные слова."""
+    s = (name or "").strip().lower()
+    repl = {
+        "ё": "е", "—": " ", "–": " ", "-": " ", ".": " ", ",": " ", "’": " ", "'": " ",
+        "«": " ", "»": " ", "(": " ", ")": " ",
+    }
+    s = s.translate(str.maketrans(repl))
+    # убираем частые приставки/слова
+    stop = ("город", "г", "республика", "респ", "край", "область", "обл")
+    parts = [p for p in s.split() if p not in stop]
+    return " ".join(parts)
+
+
+# Карта «город → IANA таймзона»
+CITY_TO_TZ: dict[str, str] = {
+    # UTC+2
+    "калининград": "Europe/Kaliningrad", "советск": "Europe/Kaliningrad",
+
+    # UTC+3 (MSK)
+    "москва": "Europe/Moscow", "санкт петербург": "Europe/Moscow", "спб": "Europe/Moscow", "питер": "Europe/Moscow",
+    "калуга": "Europe/Moscow", "тверь": "Europe/Moscow", "тула": "Europe/Moscow", "орел": "Europe/Moscow",
+    "брянск": "Europe/Moscow", "смоленск": "Europe/Moscow", "ярославль": "Europe/Moscow", "кострома": "Europe/Moscow",
+    "иваново": "Europe/Moscow", "владимир": "Europe/Moscow", "рязань": "Europe/Moscow", "липецк": "Europe/Moscow",
+    "курск": "Europe/Moscow", "тамбов": "Europe/Moscow", "вологда": "Europe/Moscow", "архангельск": "Europe/Moscow",
+    "мурманск": "Europe/Moscow", "петрозаводск": "Europe/Moscow", "псков": "Europe/Moscow",
+    "великий новгород": "Europe/Moscow", "нижний новгород": "Europe/Moscow", "казань": "Europe/Moscow",
+    "ростов на дону": "Europe/Moscow", "краснодар": "Europe/Moscow", "сочи": "Europe/Moscow",
+    "воронеж": "Europe/Moscow", "севастополь": "Europe/Moscow", "симферополь": "Europe/Moscow",
+    "белгород": "Europe/Moscow",
+    # спец-регионы MSK
+    "волгоград": "Europe/Volgograd", "волжский": "Europe/Volgograd", "камышин": "Europe/Volgograd",
+
+    # UTC+4
+    "самара": "Europe/Samara", "тольятти": "Europe/Samara", "сызрань": "Europe/Samara", "syzran": "Europe/Samara",
+    "ижевск": "Europe/Samara",
+    "ульяновск": "Europe/Ulyanovsk", "димитровград": "Europe/Ulyanovsk",
+    "астрахань": "Europe/Astrakhan",
+    "саратов": "Europe/Saratov", "энгельс": "Europe/Saratov", "балаково": "Europe/Saratov",
+
+    # UTC+5
+    "екатеринбург": "Asia/Yekaterinburg", "челябинск": "Asia/Yekaterinburg", "пермь": "Asia/Yekaterinburg",
+    "уфа": "Asia/Yekaterinburg", "оренбург": "Asia/Yekaterinburg", "тюмень": "Asia/Yekaterinburg",
+    "курган": "Asia/Yekaterinburg", "ханты мансийск": "Asia/Yekaterinburg", "сургут": "Asia/Yekaterinburg",
+    "нижневартовск": "Asia/Yekaterinburg", "салехард": "Asia/Yekaterinburg",
+
+    # UTC+6
+    "омск": "Asia/Omsk",
+
+    # UTC+7
+    "новосибирск": "Asia/Novosibirsk", "бердск": "Asia/Novosibirsk", "искитим": "Asia/Novosibirsk", "обь": "Asia/Novosibirsk",
+    "барнаул": "Asia/Barnaul", "бийск": "Asia/Barnaul", "рубцовск": "Asia/Barnaul", "новоалтайск": "Asia/Barnaul",
+    "томск": "Asia/Tomsk", "северск": "Asia/Tomsk",
+    "кемерово": "Asia/Novokuznetsk", "новокузнецк": "Asia/Novokuznetsk", "прокопьевск": "Asia/Novokuznetsk",
+    "киселевск": "Asia/Novokuznetsk",
+    "красноярск": "Asia/Krasnoyarsk", "абакан": "Asia/Krasnoyarsk", "норильск": "Asia/Krasnoyarsk",
+    "кызыл": "Asia/Krasnoyarsk", "канск": "Asia/Krasnoyarsk", "ачинск": "Asia/Krasnoyarsk",
+
+    # UTC+8
+    "иркутск": "Asia/Irkutsk", "братск": "Asia/Irkutsk", "ангарск": "Asia/Irkutsk",
+    "улан уде": "Asia/Irkutsk", "улан удэ": "Asia/Irkutsk",
+
+    # UTC+9
+    "якутск": "Asia/Yakutsk", "нерюнгри": "Asia/Yakutsk", "благовещенск": "Asia/Yakutsk",
+    "свободный": "Asia/Yakutsk", "тында": "Asia/Yakutsk", "зея": "Asia/Yakutsk",
+    "чита": "Asia/Chita",
+
+    # UTC+10
+    "владивосток": "Asia/Vladivostok", "хабаровск": "Asia/Vladivostok",
+    "комсомольск на амуре": "Asia/Vladivostok", "биробиджан": "Asia/Vladivostok",
+    "находка": "Asia/Vladivostok", "уссурийск": "Asia/Vladivostok", "арсеньев": "Asia/Vladivostok",
+
+    # UTC+11
+    "южно сахалинск": "Asia/Sakhalin", "корсаков": "Asia/Sakhalin",
+    "холмск": "Asia/Sakhalin", "оха": "Asia/Sakhalin",
+    "магадан": "Asia/Magadan", "среднеколымск": "Asia/Srednekolymsk",
+
+    # UTC+12
+    "петропавловск камчатский": "Asia/Kamchatka", "анадырь": "Asia/Anadyr",
 }
-tz = TZ_BY_CITY.get(user_city, "Europe/Moscow")
+
+
+DEFAULT_TZ = "Europe/Moscow"
+
+def guess_timezone(city: str) -> str:
+    key = _norm_city(city)
+    if not key:
+        return DEFAULT_TZ
+
+    # 1) точное совпадение
+    if key in CITY_TO_TZ:
+        return CITY_TO_TZ[key]
+
+    # 2) сопоставление без пробелов (ростов-на-дону vs ростов на дону)
+    key_nospace = key.replace(" ", "")
+    for name, tzid in CITY_TO_TZ.items():
+        if name.replace(" ", "") == key_nospace:
+            return tzid
+
+    # 3) попытка найти по вхождению токенов (например, “г. Великий Новгород”)
+    tokens = key.split()
+    for name, tzid in CITY_TO_TZ.items():
+        nm_tokens = name.split()
+        # если все токены короткой формы присутствуют в длинной — считаем совпадением
+        if all(t in tokens for t in nm_tokens):
+            return tzid
+
+    # 4) дефолт
+    return DEFAULT_TZ
+
+user_city = (user_city or "").strip()
+tz = guess_timezone(user_city)
+logger.info("Timezone (by user_city or default): %s → %s", user_city, tz)
+
+
 
 # === fingerprint values (согласовано под Windows/Chrome) ===
 FP_PLATFORM = "Win32"
@@ -582,47 +752,145 @@ def _human_delay() -> float:
 
 
 async def human_type(page, selector: str, text: str, ctx: RunContext):
-    """Вводит `text` в элемент `selector` максимально «по-человечески»."""
+    """Печатает текст «по-человечески».
+    Блокирует прокрутку ТОЛЬКО во время набора поля имени, не трогая видимость скроллбара:
+    — активируется после первого реально напечатанного символа,
+    — отключается сразу по завершении ввода имени,
+    — overflow/паддинги/скроллбар НЕ меняются.
+    """
     await page.focus(selector)
     n = len(text)
     coef = 0.8 if n <= 3 else 1.15 if n > 20 else 1.0
     total = 0.0
 
+    name_sel = (getattr(ctx, "selectors", None) or {}).get("form", {}).get("name")
+    is_name = (selector == name_sel)
+    guard_installed = False
+
+    INSTALL_JS = r"""
+    (() => {
+      if (window.__SG && window.__SG.active) return true;
+      const d = document;
+      const frozen = {
+        x: window.pageXOffset || d.documentElement.scrollLeft || 0,
+        y: window.pageYOffset || d.documentElement.scrollTop || 0
+      };
+      const prevent = e => { e.preventDefault(); e.stopImmediatePropagation(); };
+      const keyPrevent = e => {
+        const ae = d.activeElement;
+        const isEd = ae && (ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'||ae.isContentEditable);
+        const keys = ['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '];
+        if (!isEd && keys.includes(e.key)) { e.preventDefault(); e.stopImmediatePropagation(); }
+      };
+      const onScroll = () => { window.scrollTo(frozen.x, frozen.y); };
+
+      const old = {
+        scrollTo: window.scrollTo,
+        scrollBy: window.scrollBy,
+        elSIV: Element.prototype.scrollIntoView,
+      };
+
+      // Запрещаем программный скролл (но не трогаем overflow/полосы прокрутки)
+      window.scrollTo = function(){};
+      window.scrollBy = function(){};
+      Element.prototype.scrollIntoView = function(){};
+
+      // Глушим пользовательские источники прокрутки
+      window.addEventListener('wheel', prevent, {passive:false, capture:true});
+      window.addEventListener('touchmove', prevent, {passive:false, capture:true});
+      window.addEventListener('keydown', keyPrevent, {passive:false, capture:true});
+      window.addEventListener('scroll', onScroll, {passive:false, capture:true});
+
+      window.__SG = {active:true, prevent, keyPrevent, onScroll, old};
+      return true;
+    })();
+    """
+
+    RESTORE_JS = r"""
+    (() => {
+      const g = window.__SG;
+      if (!g || !g.active) return false;
+
+      window.removeEventListener('wheel', g.prevent, {capture:true});
+      window.removeEventListener('touchmove', g.prevent, {capture:true});
+      window.removeEventListener('keydown', g.keyPrevent, {capture:true});
+      window.removeEventListener('scroll', g.onScroll, {capture:true});
+
+      if (g.old){
+        window.scrollTo = g.old.scrollTo;
+        window.scrollBy = g.old.scrollBy;
+        Element.prototype.scrollIntoView = g.old.elSIV;
+      }
+      window.__SG = {active:false};
+      return true;
+    })();
+    """
+
     for char in text:
         delay = _human_delay() * coef
+
+        # возможная «опечатка»
         if not char.isdigit() and _rnd.random() < CFG["TYPO_PROB"]:
             await page.keyboard.type(char, delay=0)
+            if is_name and not guard_installed:
+                try:
+                    await page.evaluate(INSTALL_JS)
+                    logger.info("[SCROLL-GUARD] installed")
+                    guard_installed = True
+                except Exception:
+                    pass
             await asyncio.sleep(delay)
             await page.keyboard.press("Backspace")
             total += delay
+
+        # основной ввод символа
         await page.keyboard.type(char, delay=0)
+        if is_name and not guard_installed:
+            try:
+                await page.evaluate(INSTALL_JS)
+                logger.info("[SCROLL-GUARD] installed")
+                guard_installed = True
+            except Exception:
+                pass
+
         await asyncio.sleep(delay)
         total += delay
 
+    # снимаем блок только по окончании печати имени
+    if is_name and guard_installed:
+        try:
+            await page.evaluate(RESTORE_JS)
+            logger.info("[SCROLL-GUARD] restored")
+        except Exception:
+            pass
+
     logger.info(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}')
+
 
 
 # -------------------- ФИО --------------------
 async def fill_full_name(page, name: str, ctx: RunContext, retries: int = 3) -> bool:
     for attempt in range(retries):
         try:
-            input_box = page.locator(selectors["form"]["name"])
+            input_box = page.locator((getattr(ctx, "selectors", None) or selectors or {})["form"]["name"])
 
             # ► СКРОЛЛ, если нужно, чтобы поле оказалось в видимой зоне
-            await _scroll_if_needed(
-                input_box, dropdown_room=150, step_range=(140, 150)
-            )  # room≈высота клавиатуры
+            if attempt == 0:
+                await _scroll_if_needed(
+                    input_box, dropdown_room=150, step_range=(170, 190)
+                )  # room≈высота клавиатуры
+
 
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            await page.wait_for_timeout(_rnd.randint(20, 40))
+            await page.wait_for_timeout(_rnd.randint(10, 12))
 
             await input_box.fill("")
-            await human_type(page, selectors["form"]["name"], name, ctx)
+            await human_type(page, (getattr(ctx, "selectors", None) or selectors or {})["form"]["name"], name, ctx)
 
             if (await input_box.input_value()).strip() == name.strip():
                 return True
-            await page.wait_for_timeout(_rnd.randint(40, 70))
+            await page.wait_for_timeout(_rnd.randint(10, 12))
         except Exception as e:
             logger.warning("fill_full_name attempt %s failed: %s", attempt + 1, e)
 
@@ -646,16 +914,18 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
            • если набрано ≥ 75 % слова и вариантов ≤ 4 —
              выбираем точное совпадение.
     """
-    item_sel = selectors["form"]["city_item"]
-    list_sel = selectors["form"].get("city_list", item_sel)
+    item_sel = (getattr(ctx, "selectors", None) or selectors or {})["form"]["city_item"]
+    list_sel = (getattr(ctx, "selectors", None) or selectors or {})["form"].get("city_list", item_sel)
     list_sel_visible = f"{list_sel}:visible"  # считаем только видимые
 
     for attempt in range(retries):
         try:
-            inp = page.locator(selectors["form"]["city"])
+            inp = page.locator((getattr(ctx, "selectors", None) or selectors or {})["form"]["city"])
 
-            # 1) скроллим, если под полем < 260 px
-            await _scroll_if_needed(inp, dropdown_room=260, step_range=(110, 120))
+            # 1) скроллим, если под полем < 260 px — только на первом заходе
+            if attempt == 0:
+                await _scroll_if_needed(inp, dropdown_room=260, step_range=(110, 120))
+
 
             # 2) курсор, клик, очистка
             await human_move_cursor(page, inp, ctx)
@@ -668,7 +938,7 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
             for ch in city:
                 # 3-а) печать одной буквы с human-delay
                 await human_type_city_autocomplete(
-                    page, selectors["form"]["city"], ch, ctx
+                    page, (getattr(ctx, "selectors", None) or selectors or {})["form"]["city"], ch, ctx
                 )
                 typed += ch
 
@@ -681,21 +951,21 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
                             el.dispatchEvent(new Event(t, { bubbles: true }))
                         );
                     }""",
-                    selectors["form"]["city"],
+                    (getattr(ctx, "selectors", None) or selectors or {})["form"]["city"],
                 )
 
                 # 3-в) короткая «человечная» пауза
-                await asyncio.sleep(_rnd.uniform(0.06, 0.14))
+                await asyncio.sleep(_rnd.uniform(0.01, 0.04))
 
                 # 3-г) ждём изменения списка (≤ 15 × 60 мс)
                 lst = page.locator(list_sel_visible)
                 prev_cnt = -1
-                for _ in range(15):
+                for _ in range(3):
                     cnt = await lst.count()
                     if cnt > 0 and cnt != prev_cnt:
                         break
                     prev_cnt = cnt
-                    await asyncio.sleep(0.06)
+                    await asyncio.sleep(0.02)
                 else:
                     raise ValueError("dropdown no change")
 
@@ -709,7 +979,7 @@ async def fill_city(page, city: str, ctx: RunContext, retries: int = 3) -> bool:
                         item = lst.nth(idx)
                         await human_move_cursor(page, item, ctx)
                         await ghost_click(item)
-                        await asyncio.sleep(_rnd.uniform(0.03, 0.06))
+                        await asyncio.sleep(_rnd.uniform(0.01, 0.03))
                         if (await inp.input_value()).strip() == city.strip():
                             return True
                         raise ValueError("value mismatch after click")
@@ -738,19 +1008,19 @@ async def fill_phone(page, phone: str, ctx: RunContext, retries: int = 3) -> boo
 
     for attempt in range(retries):
         try:
-            input_box = page.locator(selectors["form"]["phone"])
+            input_box = page.locator((getattr(ctx, "selectors", None) or selectors or {})["form"]["phone"])
 
             # курсор → клик по полю
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            await page.wait_for_timeout(_rnd.randint(25, 45))
+            await asyncio.sleep(0.005)
 
             # очищаем и печатаем номер
             await input_box.fill("")
-            await human_type(page, selectors["form"]["phone"], phone, ctx)
+            await human_type(page, (getattr(ctx, "selectors", None) or selectors or {})["form"]["phone"], phone, ctx)
 
             # ждём, пока маска применится
-            await page.wait_for_timeout(_rnd.randint(60, 80))
+            await page.wait_for_timeout(_rnd.randint(10, 12))
 
             # проверяем, что введён тот же набор цифр
             typed = await input_box.input_value()
@@ -765,7 +1035,7 @@ async def fill_phone(page, phone: str, ctx: RunContext, retries: int = 3) -> boo
                 typed,
                 phone,
             )
-            await page.wait_for_timeout(_rnd.randint(40, 70))
+            await page.wait_for_timeout(_rnd.randint(10, 12))
 
         except Exception as e:
             logger.warning("fill_phone attempt %s failed: %s", attempt + 1, e)
@@ -809,7 +1079,7 @@ async def _tiny_scroll_once(px: int) -> None:
         # микро-джиттер и короткая пауза, но без длинных «задумчивостей»
         if _rnd.random() < 0.12:
             await GCURSOR.wheel(0, -direction * _rnd.randint(0, 6))
-        await asyncio.sleep(_rnd.uniform(0.05, 0.12))
+        await asyncio.sleep(_rnd.uniform(0.02, 0.05))
 
 
 
@@ -850,14 +1120,16 @@ async def _scroll_if_needed(
 
 # -------------------- ПОЛ --------------------
 async def fill_gender(page, gender: str, ctx: RunContext, retries: int = 3) -> bool:
-    input_sel = selectors["form"]["gender"]
-    item_sel = selectors["form"]["gender_item"]
+    input_sel = (getattr(ctx, "selectors", None) or selectors or {})["form"]["gender"]
+    item_sel = (getattr(ctx, "selectors", None) or selectors or {})["form"]["gender_item"]
     input_box = page.locator(input_sel)
 
     for attempt in range(retries):
         try:
-            # ► тот же универсальный скролл
-            await _scroll_if_needed(input_box, dropdown_room=220, step_range=(110, 120))
+            # ► тот же универсальный скролл — только на первом заходе
+            if attempt == 0:
+                await _scroll_if_needed(input_box, dropdown_room=190, step_range=(90, 95))
+
 
             # открыть список
             await human_move_cursor(page, input_box, ctx)
@@ -865,7 +1137,7 @@ async def fill_gender(page, gender: str, ctx: RunContext, retries: int = 3) -> b
 
             # выбрать пункт
             option = page.locator(item_sel).get_by_text(gender, exact=True)
-            await option.wait_for(state="visible", timeout=4_000)
+            await option.wait_for(state="visible", timeout=600)
             await human_move_cursor(page, option, ctx)
             await ghost_click(option)
 
@@ -899,64 +1171,244 @@ async def fill_gender(page, gender: str, ctx: RunContext, retries: int = 3) -> b
 async def fill_age(page, age, ctx: RunContext, retries=3):
     for attempt in range(retries):
         try:
-            input_box = page.locator(selectors["form"]["age"])
+            input_box = page.locator((getattr(ctx, "selectors", None) or selectors or {})["form"]["age"])
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            await page.wait_for_timeout(_rnd.randint(25, 45))
+            await asyncio.sleep(0.005)
             await input_box.fill("")
-            await human_type(page, selectors["form"]["age"], age, ctx)
+            await human_type(page, (getattr(ctx, "selectors", None) or selectors or {})["form"]["age"], age, ctx)
             value = await input_box.input_value()
             if value.strip() == age.strip():
                 return True
-            await page.wait_for_timeout(_rnd.randint(40, 70))
+            await page.wait_for_timeout(_rnd.randint(10, 12))
         except Exception as e:
             logger.warning("fill_age attempt %s failed: %s", attempt + 1, e)
     logger.error("Не удалось заполнить поле Возраст")
     return False
 
 
-async def fill_courier_type(page, courier_type, ctx: RunContext, retries=3):
+
+
+
+
+
+
+
+
+
+async def fill_courier_type(page, courier_type, ctx: RunContext, retries: int = 3) -> bool:
+    input_sel = (getattr(ctx, "selectors", None) or selectors or {})["form"]["courier"]
+    item_sel  = (getattr(ctx, "selectors", None) or selectors or {})["form"]["courier_item"]
+    input_box = page.locator(input_sel)
+
     for attempt in range(retries):
         try:
-            input_box = page.locator(selectors["form"]["courier"])
+            # Лёгкий авто-скролл только на первой попытке
+            if attempt == 0:
+                await _scroll_if_needed(input_box, dropdown_room=220, step_range=(110, 120))
+
+            # Открыть выпадашку
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
-            item_sel = selectors["form"]["courier_item"]
-            option = page.locator(item_sel).get_by_text(courier_type, exact=True)
-            await human_move_cursor(page, option, ctx)
+
+            # Дождаться появления списка опций (быстро из-за default_timeout=2500)
+            options = page.locator(f"{item_sel}:visible")
+            await options.first.wait_for(state="visible", timeout=1200)
+
+            # Выбрать нужный пункт (без дополнительного движения курсором)
+            option = options.filter(has_text=str(courier_type)).first
             await ghost_click(option)
 
-            return True
-        except Exception as e:
-            logger.warning(
-                "fill_courier_type attempt %s failed: %s",
-                attempt + 1,
-                e,
+            # Проверить, что реально выбралось (как в fill_gender)
+            val = await page.evaluate(
+                """(selInput) => {
+                    const inp = document.querySelector(selInput);
+                    if (!inp) return "";
+                    const wrap = inp.closest('.form-select, .select-wrapper, .select');
+                    if (wrap){
+                        const sel = wrap.querySelector('.form-select__selected, .selected, [data-selected], .form-list-item.selected');
+                        if (sel && sel.textContent) return sel.textContent.trim();
+                    }
+                    return inp.value || "";
+                }""",
+                input_sel,
             )
+            if val.lower().startswith(str(courier_type).lower()):
+                return True
+
+            # Если не совпало — форсим новую попытку без лишних пауз
+            raise ValueError(f"courier value mismatch ({val!r})")
+
+        except Exception as e:
+            logger.warning("fill_courier_type attempt %s failed: %s", attempt + 1, e)
+
     logger.error("Не удалось выбрать тип курьера")
     return False
 
 
-async def fill_policy_checkbox(page, ctx: RunContext, retries=3):
-    for attempt in range(retries):
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+async def fill_policy_checkbox(page, ctx: RunContext, retries: int = 1) -> bool:
+    sel = (getattr(ctx, "selectors", None) or selectors or {})["form"]["policy"]
+    container = page.locator(sel)
+    cb = container.locator('input[type="checkbox"]').first
+
+    # если настоящего input нет — попробуем label[for] → input#id
+    if await cb.count() == 0:
         try:
-            input_box = page.locator(selectors["form"]["policy"])
-            await _scroll_if_needed(input_box)
-            await ghost_click(input_box)
+            if await container.evaluate("el => el.tagName==='INPUT' && el.type==='checkbox'"):
+                cb = container
+            else:
+                for_id = await container.get_attribute("for")
+                if for_id:
+                    cb = page.locator(f"#{for_id}")
+        except Exception:
+            pass
+
+    # целимся ТОЛЬКО в один таргет (чтобы не «переклёпывать»)
+    click_target = container if await container.count() else cb
+
+    async def _is_checked() -> bool:
+        # 1) честный input
+        try:
+            if await cb.count():
+                return await cb.is_checked()
+        except Exception:
+            pass
+        # 2) aria/классы/вложенный input — для кастомных чекбоксов
+        return await page.evaluate(
+            """(sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return false;
+                const aria = el.getAttribute('aria-checked');
+                if (aria != null) return aria === 'true';
+                const cls = el.className || '';
+                if (/\b(checked|is-checked|active|on)\b/i.test(cls)) return true;
+                const inp = el.querySelector('input[type="checkbox"]');
+                return !!(inp && inp.checked);
+            }""",
+            sel
+        )
+
+    async def _wait_stable_checked(duration=0.12, poll=0.03, max_wait=0.8) -> bool:
+        need = int(duration / poll)
+        streak = 0
+        t0 = asyncio.get_event_loop().time()
+        while True:
+            if await _is_checked():
+                streak += 1
+                if streak >= need:
+                    return True
+            else:
+                streak = 0
+            if asyncio.get_event_loop().time() - t0 > max_wait:
+                # не добились стабильности — вернём текущее состояние, чтобы не зависать
+                return await _is_checked()
+            await asyncio.sleep(poll)
+
+
+    # уже отмечен — ничего не трогаем
+    with suppress(Exception):
+        if await _is_checked():
             return True
-        except Exception as e:
-            logger.warning(
-                "fill_policy_checkbox attempt %s failed: %s",
-                attempt + 1,
-                e,
-            )
+
+    # 0) если есть реальный input — пробуем Playwright.check (не мигает)
+    try:
+        if await cb.count():
+            await cb.check(force=True)
+            await asyncio.sleep(0.05)
+            ok = await _wait_stable_checked()
+            if ok:
+                # уберём курсор с элемента, чтобы никакие hover-обработчики не дергали классы
+                with suppress(Exception):
+                    await GCURSOR.page.mouse.move(10, 10)
+                return True
+            # если не ок — пойдём по следующим стратегиям (клик/форс), без return
+
+    except Exception:
+        pass
+
+    # 1) один человеческий клик по единственному таргету
+    try:
+        with suppress(Exception):
+            await _scroll_if_needed(click_target, dropdown_room=100, step_range=(90, 110))
+        await human_move_cursor(page, click_target, ctx)
+        await ghost_click(click_target)
+        await asyncio.sleep(_rnd.uniform(0.02, 0.05))
+        if await _wait_stable_checked():
+            with suppress(Exception):
+                await GCURSOR.page.mouse.move(10, 10)
+            return True
+    except Exception as e:
+        logger.warning("fill_policy_checkbox: click path failed: %s", e)
+
+    # 2) форс-установка (без кликов) + события
+    try:
+        await page.evaluate(
+            """(sel) => {
+                const root = document.querySelector(sel);
+                if (!root) return;
+                const inp = root.matches('input[type="checkbox"]')
+                    ? root
+                    : (root.querySelector('input[type="checkbox"]') || null);
+
+                if (inp) {
+                    inp.checked = true;
+                    inp.setAttribute('aria-checked','true');
+                    inp.dispatchEvent(new Event('input', {bubbles:true}));
+                    inp.dispatchEvent(new Event('change',{bubbles:true}));
+                } else {
+                    root.classList.add('checked','is-checked','active','on');
+                    root.setAttribute('aria-checked','true');
+                    root.dispatchEvent(new Event('input', {bubbles:true}));
+                    root.dispatchEvent(new Event('change',{bubbles:true}));
+                }
+            }""",
+            sel
+        )
+        await _wait_stable_checked()
+        with suppress(Exception):
+            await GCURSOR.page.mouse.move(10, 10)
+        return True
+    except Exception as e:
+        logger.warning("fill_policy_checkbox: force path failed: %s", e)
+
     logger.error("Не удалось поставить галочку политики")
+    await asyncio.sleep(1)
     return False
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 async def submit_form(page, ctx: RunContext):
     """Click submit button or submit form if the button is hidden."""
-    btn = page.locator(selectors["form"]["submit"])
+    btn = page.locator((getattr(ctx, "selectors", None) or selectors or {})["form"]["submit"])
     try:
         display = await btn.evaluate("el => getComputedStyle(el).display")
         if display == "none":
@@ -1155,7 +1607,7 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             else:
                 await human_scroll(step)
             logger.info(f"[SCROLL] wheel down {step}")
-            await asyncio.sleep(_rnd.uniform(0.7, 1.7))
+            await asyncio.sleep(_rnd.uniform(0.5, 1.1))
         elif action == "scroll_up":
             step = _rnd.randint(*CFG["SCROLL_STEP"]["up"])
             if step > 320:
@@ -1168,7 +1620,7 @@ async def emulate_user_reading(page, total_time, ctx: RunContext):
             logger.info(f"[SCROLL] wheel up {step}")
             await asyncio.sleep(_rnd.uniform(0.5, 1.1))
         elif action == "pause":
-            t = _rnd.uniform(1.2, 3.8)
+            t = _rnd.uniform(0.7, 1.6) 
             logger.info(f"[INFO] Пауза {t:.1f}")
             await asyncio.sleep(t)
         elif action == "mouse_wiggle":
@@ -1200,7 +1652,7 @@ async def scroll_to_form_like_reading(page, ctx: RunContext, timeout: float = 15
     с разбросом ±70 px (рандомно на каждый запуск).
     """
     sel = (
-        (selectors or {}).get("form", {}).get("wrapper")
+        (getattr(ctx, "selectors", None) or selectors or {}).get("form", {}).get("wrapper")
         or CFG.get("SELECTORS", {}).get("FORM_WRAPPER")
         or "div.form-wrapper"
     )
@@ -1445,126 +1897,62 @@ def _set_cursor_speed(cur, vmin=1750, vmax=2200):
 async def _wait_submit_result(context, page, submit_btn, modal_selector: str, ctx: RunContext,
                               first_wait: float = 30.0, second_wait: float = 120.0):
     """
-    Ждёт любой сигнал успеха:
-      • redirect (URL изменился на той же вкладке),
-      • появление модалки "Спасибо" по селектору,
-      • появление текста 'спасибо'/'thank you' на странице,
-      • новая вкладка (popup) в контексте или через page.popup,
-      • закрытие исходной вкладки и появление новой активной.
-    Возвращает (success: bool, active_page: Page|None).
+    После клика ждём СНАЧАЛА редирект в той же вкладке, затем «Спасибо» в этой же вкладке.
+    Без обработки новых вкладок/попапов. Успех = появление модалки «Спасибо»
+    или текста 'спасибо'/'thank you' на странице.
+    Возвращает (success: bool, active_page: Page|None), где active_page всегда текущая page.
     """
     def ms(sec: float) -> int: return int(sec * 1000)
-    try:
-        old_url = page.url
-    except PlaywrightError:
-        old_url = ""
 
-    # слушатели popup заранее
-    task_ctx_popup = asyncio.create_task(context.wait_for_event("page"))
-    task_page_popup = asyncio.create_task(page.wait_for_event("popup"))
-
-    async def _cleanup_popup_waiters():
-        for t in (task_ctx_popup, task_page_popup):
-            if not t.done():
-                t.cancel()
-            with suppress(asyncio.CancelledError, Exception):
-                await t
-
-    async def w_redirect(p, timeout_ms):
+    async def wait_redirect_same_tab(p, old_url: str, timeout_s: float) -> bool:
         try:
-            await p.wait_for_function("url => location.href !== url", arg=old_url, timeout=timeout_ms)
-            return ("redirect", p)
+            await p.wait_for_function("url => location.href !== url", arg=old_url, timeout=ms(timeout_s))
+            return True
         except Exception:
-            return None
+            return False
 
-    async def w_modal(p, timeout_ms):
-        if not modal_selector:
-            return None
-        try:
-            await p.wait_for_selector(modal_selector, state="visible", timeout=timeout_ms)
-            return ("modal", p)
-        except Exception:
-            return None
-
-    async def w_thanks_text(p, timeout_ms):
-        js = """
-        () => {
-          const t = (document.body && document.body.innerText || "").toLowerCase();
-          return t.includes("спасибо") || t.includes("thank you");
-        }"""
-        try:
-            await p.wait_for_function(js, timeout=timeout_ms)
-            return ("thanks-text", p)
-        except Exception:
-            return None
-
-    async def w_popup(timeout_ms):
-        done, _ = await asyncio.wait(
-            [task_ctx_popup, task_page_popup],
-            timeout=timeout_ms / 1000,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if not done:
-            return None
-        for t in done:
+    async def wait_thanks_same_tab(p, timeout_s: float) -> bool:
+        short = min(timeout_s, 4.0)  # ждём модалку недолго
+        if modal_selector:
+            # моментальная проверка "есть и видно" без долгого ожидания
             try:
-                newp = t.result()
-                with suppress(Exception):
-                    await newp.wait_for_load_state("domcontentloaded", timeout=20_000)
-                return ("popup", newp)
+                exists_and_visible = await p.evaluate(
+                    """sel => {
+                        const el = document.querySelector(sel);
+                        if (!el) return false;
+                        const s = getComputedStyle(el);
+                        const r = el.getBoundingClientRect();
+                        return s.display !== 'none'
+                            && s.visibility !== 'hidden'
+                            && r.width > 0 && r.height > 0;
+                    }""",
+                    modal_selector,
+                )
             except Exception:
-                continue
-        return None
-
-    async def w_close_then_new(p, timeout_ms):
-        try:
-            await p.wait_for_event("close", timeout=timeout_ms)
-        except Exception:
-            return None
-        t0 = time.time()
-        while time.time() - t0 < 3.0:
-            pages = [pg for pg in context.pages if not pg.is_closed()]
-            if pages:
-                newp = pages[-1]
-                with suppress(Exception):
-                    await newp.wait_for_load_state("domcontentloaded", timeout=20_000)
-                logger.info("[INFO] Старая вкладка закрыта, переключились на новую")
-                return ("closed->new", newp)
-            await asyncio.sleep(0.1)
-        return ("closed", None)
-
-    async def phase(timeout_s):
-        timeout_ms = ms(timeout_s)
-        watchers = [
-            w_redirect(page, timeout_ms),
-            w_modal(page, timeout_ms),
-            w_thanks_text(page, timeout_ms),
-            w_popup(timeout_ms),
-            w_close_then_new(page, timeout_ms),
-        ]
-        tasks = [asyncio.create_task(w) for w in watchers]
-        done, pending = await asyncio.wait(
-            tasks,
-            timeout=timeout_s,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for t in pending:
-            t.cancel()
-        if pending:
-            with suppress(Exception):
-                await asyncio.gather(*pending, return_exceptions=True)
-        if not done:
-            return False, page
-        for t in done:
+                exists_and_visible = False
+            if exists_and_visible:
+                return True
             try:
-                res = t.result()
-                if res and res[0] in {"redirect", "modal", "thanks-text", "popup", "closed->new"}:
-                    return True, res[1]
+                await p.wait_for_selector(modal_selector, state="visible", timeout=ms(short))
+                return True
             except Exception:
-                continue
+                pass
+        try:
+            await p.wait_for_function(
+                "() => { const t=(document.body&&document.body.innerText||'').toLowerCase();"
+                "return t.includes('спасибо')||t.includes('thank you'); }",
+                timeout=ms(short),
+            )
+            return True
+        except Exception:
+            return False
+
+
+    # ——— Клик №1 ———
+    # перед тем как кликать, удостоверимся, что страница ещё открыта
+    if hasattr(page, "is_closed") and page.is_closed():
+        logger.error("Page is closed before submit click")
         return False, page
-
-    # первый клик
     try:
         with suppress(Exception):
             await submit_btn.scroll_into_view_if_needed()
@@ -1572,30 +1960,57 @@ async def _wait_submit_result(context, page, submit_btn, modal_selector: str, ct
             await human_move_cursor(page, submit_btn, ctx)
         await ghost_click(submit_btn)
         logger.info("[INFO] Первый клик по кнопке 'Оставить заявку'")
-        _box = await submit_btn.bounding_box()
-        if _box:
-            _cx = _box["x"] + _box["width"] / 2
-            _cy = _box["y"] + _box["height"] / 2
-            ctx.mouse_pos = (_cx, _cy)
+        with suppress(Exception):
+            _box = await submit_btn.bounding_box()
+            if _box:
+                ctx.mouse_pos = (_box["x"] + _box["width"] / 2, _box["y"] + _box["height"] / 2)
     except PlaywrightError as e:
         logger.error("Клик по submit не удался: %s", e)
-        await _cleanup_popup_waiters()
         return False, page
 
-    ok, active = await phase(first_wait)
-    if ok:
-        await _cleanup_popup_waiters()
-        return True, active
+    try:
+        old_url = page.url
+    except PlaywrightError:
+        old_url = ""
 
-    # повторный клик при необходимости (без движения, если близко)
+    # быстрый чекап: модалка уже появилась?
+    if await wait_thanks_same_tab(page, 4.0):
+        return True, page
+
+
+    # 1) ждём редирект в той же вкладке
+    redirected = await wait_redirect_same_tab(page, old_url, first_wait)
+    # 2) после редиректа (или даже без него, на всякий случай) ждём «Спасибо»
+    if redirected:
+        # URL уже новый; дополнительное окно ожидания модалки
+        if await wait_thanks_same_tab(page, first_wait):
+            return True, page
+    else:
+        # редиректа нет, но вдруг сайт показал «Спасибо» без смены URL
+        if await wait_thanks_same_tab(page, first_wait):
+            return True, page
+
+    # ——— Клик №2 (повтор) ———
     with suppress(Exception):
-        if active and (not active.is_closed()) and active == page:
-            await click_no_move_if_close(active, submit_btn, ctx, threshold_px=7)
-            logger.info("[INFO] Повторный клик по кнопке 'Оставить заявку'")
+        await click_no_move_if_close(page, submit_btn, ctx, threshold_px=7)
+        logger.info("[INFO] Повторный клик по кнопке 'Оставить заявку'")
+    await asyncio.sleep(0)  # фикс-пауза перед повторным ожиданием
 
-    ok, active = await phase(second_wait)
-    await _cleanup_popup_waiters()
-    return ok, (active if ok else None)
+    try:
+        old_url = page.url
+    except PlaywrightError:
+        old_url = ""
+
+    redirected = await wait_redirect_same_tab(page, old_url, second_wait)
+    if redirected:
+        if await wait_thanks_same_tab(page, second_wait):
+            return True, page
+    else:
+        if await wait_thanks_same_tab(page, second_wait):
+            return True, page
+
+    return False, page
+
 
 
 async def run_browser(ctx: RunContext):
@@ -1603,7 +2018,7 @@ async def run_browser(ctx: RunContext):
         headless = (ctx.json_headless if ctx.json_headless is not None else False)
 
         browser = await p.chromium.launch(
-            proxy=proxy_cfg if proxy_cfg else None,
+            proxy=(ctx.proxy_cfg if getattr(ctx, "proxy_cfg", None) else None),
             headless=headless,
             channel="chrome",
             args=[
@@ -1660,10 +2075,11 @@ if (window.WebGL2RenderingContext) {{
         )
         logger.info("[INFO] Patched WebGL2 getParameter")
         page = await context.new_page()
+        page.set_default_timeout(9900)
         global GCURSOR
         GCURSOR = create_cursor(page)
         # (п.5) совместимая установка скорости курсора
-        _set_cursor_speed(GCURSOR, 1750, 2200)
+        _set_cursor_speed(GCURSOR, 4200, 5800)
 
         if not hasattr(GCURSOR, "wheel"):
 
@@ -1733,6 +2149,14 @@ if (window.WebGL2RenderingContext) {{
             base_read = _rnd.uniform(2, 6)
             total_time = max(min_read, base_read - max(0, 7 - load_sec))
 
+            try:
+                box = await page.locator("div.form-wrapper").bounding_box()
+                vh = await page.evaluate("window.innerHeight")
+                if box and box["y"] < vh * 1.2:
+                    total_time = _rnd.uniform(0.6, 1.2)
+            except Exception:
+                pass
+
             logger.info(f"[INFO] Имитация “чтения” лендинга: {total_time:.1f} сек")
 
             await emulate_user_reading(page, total_time, ctx)
@@ -1766,7 +2190,7 @@ if (window.WebGL2RenderingContext) {{
 
                 logger.info("[INFO] Ставим галочку политики через fill_policy_checkbox")
                 await fill_policy_checkbox(page, ctx)
-                await asyncio.sleep(_rnd.uniform(0.1, 0.3))
+                await asyncio.sleep(_rnd.uniform(0.1, 0.2))
 
                 logger.info(
                     "[INFO] Все поля формы заполнены и чекбокс отмечен. Ожидание завершено."
@@ -1794,34 +2218,54 @@ if (window.WebGL2RenderingContext) {{
 
             try:
                 values = await page.evaluate(
-                    """
-                () => {
-                    const getSelectText = (inputName, fallback="") => {
-                        const inp = document.querySelector('input[name="'+inputName+'"]');
-                        if (inp && inp.value) return inp.value;
-                        // если input пустой, ищем div с выбранным текстом рядом с input
-                        const wrap = inp ? inp.closest('.form-select, .select-wrapper, .select') : null;
-                        if (wrap) {
-                            const sel = wrap.querySelector('.form-select__selected, .selected, [data-selected], .form-list-item.selected');
-                            if (sel && sel.textContent) return sel.textContent.trim();
-                        }
-                        return fallback;
-                    };
-                    return {
-                        name:    document.querySelector(%s)?.value || "",
-                        city:    document.querySelector('input[name="user_city"]')?.value || "",
-                        phone:   document.querySelector(%s)?.value || "",
-                        gender:  getSelectText("user_gender"),
-                        age:     document.querySelector('input[name="user_age"]')?.value || "",
-                        courier: getSelectText("user_courier_type")
+                    """(sels) => {
+                        const qs = (s) => (s ? document.querySelector(s) : null);
+
+                        const getSelectText = (inputSel) => {
+                            const inp = qs(inputSel);
+                            if (!inp) return "";
+                            if (typeof inp.value === "string" && inp.value.trim()) {
+                                return inp.value.trim();
+                            }
+                            const wrap =
+                                inp.closest('.form-select, .select-wrapper, .select, .custom-select, .react-select, [role="combobox"]') ||
+                                inp.parentElement || inp;
+
+                            const picked =
+                                wrap.querySelector('.form-select__selected, .selected, [data-selected], .form-list-item.selected, .option.selected, [aria-selected="true"], .select__single-value, .select__value, [data-value][aria-selected="true"]');
+
+                            if (picked && picked.textContent) return picked.textContent.trim();
+
+                            const attr = inp.getAttribute('data-value') || inp.getAttribute('value') || "";
+                            return (attr || "").trim();
+                        };
+
+                        const getInputValue = (sel) => {
+                            const el = qs(sel);
+                            return el && typeof el.value === "string" ? el.value.trim() : "";
+                        };
+
+                        return {
+                            name:    getInputValue(sels.NAME),
+                            city:    getSelectText(sels.CITY),
+                            phone:   getInputValue(sels.PHONE),
+                            gender:  getSelectText(sels.GENDER),
+                            age:     getInputValue(sels.AGE),
+                            courier: getSelectText(sels.COURIER),
+                        };
+                    }""",
+                    {
+                        "NAME":    (getattr(ctx, "selectors", None) or selectors or {})["form"]["name"],
+                        "CITY":    (getattr(ctx, "selectors", None) or selectors or {})["form"]["city"],
+                        "PHONE":   (getattr(ctx, "selectors", None) or selectors or {})["form"]["phone"],
+                        "AGE":     (getattr(ctx, "selectors", None) or selectors or {})["form"]["age"],
+                        "GENDER":  (getattr(ctx, "selectors", None) or selectors or {})["form"]["gender"],
+                        "COURIER": (getattr(ctx, "selectors", None) or selectors or {})["form"]["courier"],
                     }
-                }
-                """
-                    % (
-                        json.dumps(selectors["form"]["name"]),
-                        json.dumps(selectors["form"]["phone"]),
-                    )
                 )
+
+
+
                 required_fields = {
                     "Имя": values["name"],
                     "Город": values["city"],
@@ -1861,10 +2305,11 @@ if (window.WebGL2RenderingContext) {{
                         submit_btn = btn_visible.last
                     else:
                         submit_btn = page.locator("form").locator(
-                            selectors["form"]["submit"] + ":visible"
+                            (getattr(ctx, "selectors", None) or selectors or {})["form"]["submit"] + ":visible"
                         ).last
 
-                    modal_selector = (selectors.get("form", {}).get("thank_you", "html:not(:root)"))
+                    modal_selector = (getattr(ctx, "selectors", None) or selectors or {}).get("form", {}).get("thank_you") \
+                        or ".modal-message-content, .modal-message-text"
 
                     success, active_page = await _wait_submit_result(
                         context, page, submit_btn, modal_selector, ctx,
@@ -1880,7 +2325,7 @@ if (window.WebGL2RenderingContext) {{
                         term = extract_postback_from_url(final_url)
                         ctx.postback = term
                         logger.info("postback: %s", term or "<empty>")
-                        await asyncio.sleep(_rnd.uniform(55.0, 59.0))
+                        await asyncio.sleep(_rnd.uniform(0.25, 0.60))
                     else:
                         logger.error("Редирект/модалка/текст 'Спасибо' не появились")
                         ctx.errors.append("thankyou_timeout")
@@ -1906,6 +2351,13 @@ async def main(ctx: RunContext):
 
     path = Path("selectors") / f"{profile}.yml"
     logger.info("selectors profile: %s file: %s", profile, path.resolve())
+
+    # save loaded selectors onto context for later use by form-fillers
+    try:
+        setattr(ctx, "selectors", selectors)
+    except Exception:
+        # if context does not allow attribute assignment, silently ignore
+        pass
 
     # единый глобальный таймаут берём из CFG
     await asyncio.wait_for(run_browser(ctx), timeout=CFG["RUN_TIMEOUT"])
@@ -2040,7 +2492,7 @@ if __name__ == "__main__":
     # ====================================================================================
     # Этап 8. Возврат данных во Flask (результаты выполнения)
     # ====================================================================================
-    proxy_used = proxy_cfg is not None
+    proxy_used = getattr(ctx, "proxy_cfg", None) is not None
     logger.info("proxy_used: %s", proxy_used)
 
     send_result(ctx, user_phone, webhook_url, headless_error, proxy_used)

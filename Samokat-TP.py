@@ -173,7 +173,7 @@ def normalize_phone(num: str) -> str:
 # --- POSTBACK extraction (редактируй только эти 2 строки) ---
 POSTBACK_START = "utm_term="
 POSTBACK_END   = "&utm"        # None → до конца строки
-POSTBACK_FALLBACK = "Samokat"  # что вернуть, если start не найден
+POSTBACK_FALLBACK = "Samokat-TP"  # что вернуть, если start не найден
 
 def extract_postback_from_url(
     url: str,
@@ -308,7 +308,7 @@ def _append_run_result_from_log(log_path: str, out_txt_path: str) -> None:
         else:
             state = "SUCCESS" if i_succ > i_err else "ERROR"
 
-        line = "Самокат: Лидок в коробочке" if state == "SUCCESS" else "Самокат: Лидок хуёк"
+        line = "Самокат TP: Лидок в коробочке" if state == "SUCCESS" else "Самокат TP: Лидок хуёк"
 
         os.makedirs(os.path.dirname(out_txt_path), exist_ok=True)
         with open(out_txt_path, "a", encoding="utf-8") as out:
@@ -442,6 +442,18 @@ try:
         log_start_pos=log_start,
         json_headless=ctx_json_headless,
     )
+
+    for k, v in {
+        "first_abort_logged": False,
+        "postback": None,
+        "screenshot_path": None,
+        "browser_closed_manually": False,
+        "errors": [],
+        "mouse_pos": (None, None),
+    }.items():
+        setattr(ctx, k, getattr(ctx, k, v))
+
+
     file_handler = logging.FileHandler(ctx.log_file, encoding="utf-8")
     file_handler.setFormatter(logging.Formatter(
         "[%(asctime)s] %(levelname)s %(name)s – %(message)s",
@@ -752,19 +764,38 @@ def _human_delay() -> float:
 
 
 async def human_type(page, selector: str, text: str, ctx: RunContext):
-    """Печатает текст «по-человечески».
-    Блокирует прокрутку ТОЛЬКО во время набора поля имени, не трогая видимость скроллбара:
-    — активируется после первого реально напечатанного символа,
-    — отключается сразу по завершении ввода имени,
-    — overflow/паддинги/скроллбар НЕ меняются.
-    """
+    """Печатает текст «по-человечески» (без управления скроллом)."""
     await page.focus(selector)
     n = len(text)
     coef = 0.8 if n <= 3 else 1.15 if n > 20 else 1.0
     total = 0.0
 
-    name_sel = (getattr(ctx, "selectors", None) or {}).get("form", {}).get("name")
-    is_name = (selector == name_sel)
+    for char in text:
+        delay = _human_delay() * coef
+
+        # возможная «опечатка»
+        if not char.isdigit() and _rnd.random() < CFG["TYPO_PROB"]:
+            await page.keyboard.type(char, delay=0)
+            await asyncio.sleep(delay)
+            await page.keyboard.press("Backspace")
+            total += delay
+
+        # основной ввод символа
+        await page.keyboard.type(char, delay=0)
+        await asyncio.sleep(delay)
+        total += delay
+
+    logger.info(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}')
+
+
+
+
+
+
+
+# -------------------- ФИО --------------------
+async def fill_full_name(page, name: str, ctx: RunContext, retries: int = 3) -> bool:
+    # GUARD: включаем до клика по полю Имя, выключаем только при УСПЕШНОМ вводе
     guard_installed = False
 
     INSTALL_JS = r"""
@@ -790,12 +821,10 @@ async def human_type(page, selector: str, text: str, ctx: RunContext):
         elSIV: Element.prototype.scrollIntoView,
       };
 
-      // Запрещаем программный скролл (но не трогаем overflow/полосы прокрутки)
       window.scrollTo = function(){};
       window.scrollBy = function(){};
       Element.prototype.scrollIntoView = function(){};
 
-      // Глушим пользовательские источники прокрутки
       window.addEventListener('wheel', prevent, {passive:false, capture:true});
       window.addEventListener('touchmove', prevent, {passive:false, capture:true});
       window.addEventListener('keydown', keyPrevent, {passive:false, capture:true});
@@ -826,50 +855,6 @@ async def human_type(page, selector: str, text: str, ctx: RunContext):
     })();
     """
 
-    for char in text:
-        delay = _human_delay() * coef
-
-        # возможная «опечатка»
-        if not char.isdigit() and _rnd.random() < CFG["TYPO_PROB"]:
-            await page.keyboard.type(char, delay=0)
-            if is_name and not guard_installed:
-                try:
-                    await page.evaluate(INSTALL_JS)
-                    logger.info("[SCROLL-GUARD] installed")
-                    guard_installed = True
-                except Exception:
-                    pass
-            await asyncio.sleep(delay)
-            await page.keyboard.press("Backspace")
-            total += delay
-
-        # основной ввод символа
-        await page.keyboard.type(char, delay=0)
-        if is_name and not guard_installed:
-            try:
-                await page.evaluate(INSTALL_JS)
-                logger.info("[SCROLL-GUARD] installed")
-                guard_installed = True
-            except Exception:
-                pass
-
-        await asyncio.sleep(delay)
-        total += delay
-
-    # снимаем блок только по окончании печати имени
-    if is_name and guard_installed:
-        try:
-            await page.evaluate(RESTORE_JS)
-            logger.info("[SCROLL-GUARD] restored")
-        except Exception:
-            pass
-
-    logger.info(f'[DEBUG] typing "{text}" len={n} total_time={total:.2f}')
-
-
-
-# -------------------- ФИО --------------------
-async def fill_full_name(page, name: str, ctx: RunContext, retries: int = 3) -> bool:
     for attempt in range(retries):
         try:
             input_box = page.locator((getattr(ctx, "selectors", None) or selectors or {})["form"]["name"])
@@ -878,24 +863,50 @@ async def fill_full_name(page, name: str, ctx: RunContext, retries: int = 3) -> 
             if attempt == 0:
                 await _scroll_if_needed(
                     input_box, dropdown_room=150, step_range=(170, 190)
-                )  # room≈высота клавиатуры
+                )
 
+            # ► ВКЛЮЧАЕМ GUARD ПЕРЕД КЛИКОМ ПО ПОЛЮ ИМЯ (один раз)
+            if not guard_installed:
+                try:
+                    await page.evaluate(INSTALL_JS)
+                    guard_installed = True
+                    logger.info("[SCROLL-GUARD] installed (before clicking Name)")
+                except Exception:
+                    pass
 
             await human_move_cursor(page, input_box, ctx)
             await ghost_click(input_box)
             await page.wait_for_timeout(_rnd.randint(10, 12))
 
             await input_box.fill("")
-            await human_type(page, (getattr(ctx, "selectors", None) or selectors or {})["form"]["name"], name, ctx)
+            await human_type(
+                page,
+                (getattr(ctx, "selectors", None) or selectors or {})["form"]["name"],
+                name,
+                ctx,
+            )
 
             if (await input_box.input_value()).strip() == name.strip():
+                # ► УСПЕХ: СНИМАЕМ GUARD ТОЛЬКО ЗДЕСЬ
+                if guard_installed:
+                    with suppress(Exception):
+                        await page.evaluate(RESTORE_JS)
+                        logger.info("[SCROLL-GUARD] restored (after Name filled)")
                 return True
+
             await page.wait_for_timeout(_rnd.randint(10, 12))
+
         except Exception as e:
             logger.warning("fill_full_name attempt %s failed: %s", attempt + 1, e)
 
+    # В случае провала все попытки — GUARD оставляем включённым (по требованию).
     logger.error("Не удалось заполнить поле ФИО")
+    if guard_installed:
+        with suppress(Exception):
+            await page.evaluate(RESTORE_JS)
+            logger.info("[SCROLL-GUARD] restored (failure path)")
     return False
+
 
 
 # ========================= ГОРОД ========================================================================
